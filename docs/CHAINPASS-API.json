@@ -1,0 +1,773 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "ChainPass V.A.I. API",
+    "description": "ChainPass Verified Anonymous Identity (V.A.I.) Infrastructure API - Neutral third-party identity verification platform",
+    "version": "1.0.0",
+    "contact": {
+      "name": "ChainPass Support",
+      "email": "support@chainpass.com"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://pbxpkfotysozdmdophhg.supabase.co",
+      "description": "ChainPass Production API"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Verification",
+      "description": "Identity verification endpoints"
+    },
+    {
+      "name": "V.A.I.",
+      "description": "V.A.I. code management"
+    },
+    {
+      "name": "Payments",
+      "description": "Payment processing"
+    },
+    {
+      "name": "Legal",
+      "description": "Legal agreements and declarations"
+    }
+  ],
+  "paths": {
+    "/rest/v1/verification_records": {
+      "post": {
+        "tags": ["Verification"],
+        "summary": "Create verification record",
+        "description": "Initiates a new identity verification session",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVerificationRequest"
+              },
+              "example": {
+                "session_id": "sess_abc123def456",
+                "verification_status": "pending"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Verification record created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationRecord"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Verification"],
+        "summary": "Get verification records",
+        "description": "Retrieve verification records by session ID",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verification records retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VerificationRecord"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Verification"],
+        "summary": "Update verification record",
+        "description": "Update verification status and biometric confirmation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVerificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification record updated"
+          }
+        }
+      }
+    },
+    "/rest/v1/vai_assignments": {
+      "post": {
+        "tags": ["V.A.I."],
+        "summary": "Create V.A.I. assignment",
+        "description": "Generate a new V.A.I. code for verified identity",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVAIRequest"
+              },
+              "example": {
+                "verification_record_id": "550e8400-e29b-41d4-a716-446655440000",
+                "vai_code": "9I7T35L",
+                "status": "processing"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "V.A.I. assignment created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VAIAssignment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["V.A.I."],
+        "summary": "Get V.A.I. assignments",
+        "description": "Retrieve V.A.I. assignments by code",
+        "parameters": [
+          {
+            "name": "vai_code",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "V.A.I. assignments retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VAIAssignment"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["V.A.I."],
+        "summary": "Update V.A.I. assignment",
+        "description": "Update V.A.I. assignment status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": ["processing", "active", "expired", "revoked"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "V.A.I. assignment updated"
+          }
+        }
+      }
+    },
+    "/rest/v1/payments": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Create payment record",
+        "description": "Record payment for V.A.I. verification",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePaymentRequest"
+              },
+              "example": {
+                "verification_record_id": "550e8400-e29b-41d4-a716-446655440000",
+                "amount": 29.99,
+                "status": "pending"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payment record created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Payment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Payments"],
+        "summary": "Get payment records",
+        "description": "Retrieve payment records by verification ID",
+        "parameters": [
+          {
+            "name": "verification_record_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment records retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Payment"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rest/v1/legal_agreements": {
+      "post": {
+        "tags": ["Legal"],
+        "summary": "Create legal agreement",
+        "description": "Record legal agreements and signatures",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLegalAgreementRequest"
+              },
+              "example": {
+                "vai_assignment_id": "550e8400-e29b-41d4-a716-446655440000",
+                "leo_declaration_signed": false,
+                "signature_agreement_signed": true,
+                "signature_data": "data:image/png;base64,..."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Legal agreement created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalAgreement"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Legal"],
+        "summary": "Get legal agreements",
+        "description": "Retrieve legal agreements by V.A.I. assignment",
+        "parameters": [
+          {
+            "name": "vai_assignment_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Legal agreements retrieved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LegalAgreement"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Legal"],
+        "summary": "Update legal agreement",
+        "description": "Update signature status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "leo_declaration_signed": {
+                    "type": "boolean"
+                  },
+                  "signature_agreement_signed": {
+                    "type": "boolean"
+                  },
+                  "signature_data": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Legal agreement updated"
+          }
+        }
+      }
+    },
+    "/functions/v1/send-to-vairify": {
+      "post": {
+        "tags": ["V.A.I."],
+        "summary": "Send V.A.I. to Vairify",
+        "description": "Transmit verified V.A.I. data to Vairify platform",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendToVairifyRequest"
+              },
+              "example": {
+                "vaiCode": "9I7T35L",
+                "verificationRecordId": "550e8400-e29b-41d4-a716-446655440000",
+                "sessionId": "sess_abc123def456"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "V.A.I. data transmitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendToVairifyResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Transmission error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "VerificationRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "complycube_verification_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "verification_status": {
+            "type": "string",
+            "enum": ["pending", "processing", "verified", "failed"]
+          },
+          "biometric_confirmed": {
+            "type": "boolean"
+          },
+          "id_document_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "selfie_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateVerificationRequest": {
+        "type": "object",
+        "required": ["session_id"],
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "verification_status": {
+            "type": "string",
+            "default": "pending"
+          }
+        }
+      },
+      "UpdateVerificationRequest": {
+        "type": "object",
+        "properties": {
+          "complycube_verification_id": {
+            "type": "string"
+          },
+          "verification_status": {
+            "type": "string"
+          },
+          "biometric_confirmed": {
+            "type": "boolean"
+          },
+          "id_document_url": {
+            "type": "string"
+          },
+          "selfie_url": {
+            "type": "string"
+          }
+        }
+      },
+      "VAIAssignment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "verification_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vai_code": {
+            "type": "string",
+            "description": "7-character alphanumeric V.A.I. code (e.g., 9I7T35L or LEO-9I7T35L for law enforcement)"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["processing", "active", "expired", "revoked"]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateVAIRequest": {
+        "type": "object",
+        "required": ["verification_record_id", "vai_code"],
+        "properties": {
+          "verification_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vai_code": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "default": "processing"
+          }
+        }
+      },
+      "Payment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "verification_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "amount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "completed", "failed", "refunded"]
+          },
+          "stripe_payment_intent_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreatePaymentRequest": {
+        "type": "object",
+        "required": ["verification_record_id", "amount"],
+        "properties": {
+          "verification_record_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "default": "pending"
+          },
+          "stripe_payment_intent_id": {
+            "type": "string"
+          }
+        }
+      },
+      "LegalAgreement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vai_assignment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "leo_declaration_signed": {
+            "type": "boolean",
+            "description": "Law enforcement officer declaration status"
+          },
+          "signature_agreement_signed": {
+            "type": "boolean"
+          },
+          "signature_data": {
+            "type": "string",
+            "nullable": true,
+            "description": "Base64 encoded signature image"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateLegalAgreementRequest": {
+        "type": "object",
+        "required": ["vai_assignment_id"],
+        "properties": {
+          "vai_assignment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "leo_declaration_signed": {
+            "type": "boolean",
+            "default": false
+          },
+          "signature_agreement_signed": {
+            "type": "boolean",
+            "default": false
+          },
+          "signature_data": {
+            "type": "string"
+          }
+        }
+      },
+      "SendToVairifyRequest": {
+        "type": "object",
+        "required": ["vaiCode", "verificationRecordId", "sessionId"],
+        "properties": {
+          "vaiCode": {
+            "type": "string"
+          },
+          "verificationRecordId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        }
+      },
+      "SendToVairifyResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "vai_code": {
+                "type": "string"
+              },
+              "session_id": {
+                "type": "string"
+              },
+              "verification": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string"
+                  },
+                  "complycube_id": {
+                    "type": "string"
+                  },
+                  "biometric_confirmed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "payment": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "amount": {
+                    "type": "number"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "stripe_payment_intent_id": {
+                    "type": "string"
+                  }
+                }
+              },
+              "legal_agreements": {
+                "type": "object",
+                "nullable": true,
+                "properties": {
+                  "leo_declaration_signed": {
+                    "type": "boolean"
+                  },
+                  "signature_agreement_signed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "apikey",
+        "description": "Supabase anon key"
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT token for authenticated requests"
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ]
+}

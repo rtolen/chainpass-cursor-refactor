@@ -1,0 +1,76 @@
+project_id = "pbxpkfotysozdmdophhg"
+
+[functions.create-payment-intent]
+verify_jwt = false
+
+[functions.generate-api-key]
+verify_jwt = true
+
+[functions.send-partner-notification]
+verify_jwt = false
+
+[functions.send-to-vairify]
+verify_jwt = false
+
+[functions.run-retention-policy]
+verify_jwt = false
+
+[functions.detect-anomalies]
+verify_jwt = false
+
+[functions.send-admin-digest]
+verify_jwt = false
+
+[functions.forecast-admin-activity]
+verify_jwt = false
+
+[functions.generate-compliance-report]
+verify_jwt = false
+
+[functions.update-admin-performance]
+verify_jwt = false
+
+[functions.send-alert-notification]
+verify_jwt = false
+
+[functions.test-alert-notification]
+verify_jwt = false
+
+[functions.regenerate-api-key]
+verify_jwt = true
+
+[functions.update-partner-urls]
+verify_jwt = true
+
+[functions.test-webhook]
+verify_jwt = true
+
+[functions.check-api-thresholds]
+verify_jwt = false
+
+[functions.send-to-business]
+verify_jwt = false
+
+[functions.validate-webhook-signature]
+verify_jwt = true
+
+[functions.verify-vai-facial]
+verify_jwt = true
+
+[functions.verify-facial-signature]
+verify_jwt = true
+
+[functions.sign-contract]
+verify_jwt = false
+
+[functions.create-complycube-session]
+verify_jwt = false
+
+[functions.complycube-verification-callback]
+verify_jwt = false
+
+[functions.verify-complycube-biometric]
+verify_jwt = false
+
+[functions.create-complycube-flow-session]
+verify_jwt = false
