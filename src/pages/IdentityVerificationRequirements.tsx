@@ -1,15 +1,16 @@
-import { useNavigate } from "react-router-dom";
+//import { useHistory } from "react-router-dom";
+import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DocumentText, Shield, Lock, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Shield, Lock, ArrowRight, CheckCircle2 } from "lucide-react";
 import chainpassLogo from "@/assets/chainpass-logo.svg";
 
 export default function IdentityVerificationRequirements() {
-  const navigate = useNavigate();
-
+  //const history = useHistory();
+const navigate = useNavigate();
   const infoCards = [
     {
-      icon: DocumentText,
+      icon: Shield,
       title: "What We'll Collect",
       items: [
         "Government-issued ID",
@@ -166,6 +167,7 @@ export default function IdentityVerificationRequirements() {
             {/* Action Buttons */}
             <div className="space-y-4">
               <Button
+                //onClick={() => history.push("/verification-transition")}
                 onClick={() => navigate("/verification-transition")}
                 size="lg"
                 className="w-full md:w-auto min-w-[280px] h-14 text-lg font-semibold bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 shadow-glow"
