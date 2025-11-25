@@ -43,51 +43,127 @@ export default function FacialRecognitionModal({
 
   const startCamera = async () => {
     try {
+      // Check if mediaDevices is available
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera API not supported in this browser");
+      }
+
+      console.log("[Camera] Requesting camera access...");
+      
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 1280, height: 720 },
+        video: { 
+          facingMode: "user", 
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
       });
+      
+      if (!stream || stream.getVideoTracks().length === 0) {
+        throw new Error("No video track available from camera");
+      }
+
+      console.log("[Camera] Camera access granted");
       
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
         setState("camera");
+        
+        // Wait for video to be ready
+        videoRef.current.onloadedmetadata = () => {
+          console.log("[Camera] Video ready, dimensions:", 
+            videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight);
+        };
+      } else {
+        // Clean up if video ref is not available
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error("Video element not available");
       }
-    } catch (error) {
-      toast.error("Camera access denied. Please enable camera permissions.");
+    } catch (error: any) {
       console.error("[Camera] Error:", error);
+      let errorMessage = "Camera access denied. Please enable camera permissions.";
+      
+      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+        errorMessage = "Camera permission denied. Please allow camera access in your browser settings.";
+      } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+        errorMessage = "No camera found. Please connect a camera and try again.";
+      } else if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+        errorMessage = "Camera is already in use by another application.";
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
+      setState("failed");
     }
   };
 
   const captureAndVerify = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
+    if (!videoRef.current || !canvasRef.current) {
+      toast.error("Camera not ready. Please wait for camera to initialize.");
+      return;
+    }
+
+    if (!videoRef.current.videoWidth || !videoRef.current.videoHeight) {
+      toast.error("Camera video stream not ready. Please wait a moment and try again.");
+      return;
+    }
 
     setState("processing");
 
-    // Capture frame
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    ctx?.drawImage(video, 0, 0);
-    const imageData = canvas.toDataURL("image/jpeg", 0.95);
-
-    // Get ComplyCube live photo URL from session
-    const sessionId = sessionManager.getSessionId();
-    
     try {
+      // Capture frame
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      
+      if (!ctx) {
+        throw new Error("Could not get canvas context");
+      }
+      
+      ctx.drawImage(video, 0, 0);
+      const imageData = canvas.toDataURL("image/jpeg", 0.95);
+
+      if (!imageData || imageData.length < 100) {
+        throw new Error("Failed to capture image. Please try again.");
+      }
+
+      console.log("[Verification] Image captured, size:", imageData.length, "bytes");
+
+      // Get ComplyCube live photo URL from session
+      const sessionId = sessionManager.getSessionId();
+      
+      if (!sessionId) {
+        throw new Error("Session not found. Please refresh the page and try again.");
+      }
+
+      console.log("[Verification] Fetching verification record for session:", sessionId);
+
       // Get verification record
       const { data: verificationData, error: fetchError } = await supabase
         .from("verification_records")
-        .select("selfie_url, complycube_client_id")
+        .select("selfie_url, complycube_client_id, complycube_verification_id")
         .eq("session_id", sessionId)
         .single();
 
-      if (fetchError || !verificationData?.selfie_url) {
-        throw new Error("Verification data not found. Please complete ID upload first.");
+      if (fetchError) {
+        console.error("[Verification] Error fetching verification record:", fetchError);
+        throw new Error(`Failed to load verification data: ${fetchError.message}`);
+      }
+
+      if (!verificationData) {
+        throw new Error("Verification record not found. Please complete ID verification first.");
+      }
+
+      if (!verificationData.selfie_url) {
+        console.error("[Verification] No selfie_url in verification record:", verificationData);
+        throw new Error("No verification photo found. Please complete ID upload and facial verification first.");
       }
 
       console.log("[Verification] Comparing against:", verificationData.selfie_url);
+      console.log("[Verification] Calling verify-complycube-biometric function");
 
       // Call edge function to compare
       const { data, error } = await supabase.functions.invoke("verify-complycube-biometric", {
@@ -97,13 +173,24 @@ export default function FacialRecognitionModal({
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error("[Verification] Edge function error:", error);
+        // Extract more detailed error message
+        const errorMessage = error.message || 
+          (error.context?.msg) || 
+          "Failed to verify identity. Please try again.";
+        throw new Error(errorMessage);
+      }
 
       console.log("[Verification] Result:", data);
 
+      if (!data) {
+        throw new Error("No response from verification service");
+      }
+
       if (data.verified) {
-        setConfidence(data.confidence);
-        setAnalysis(data.analysis);
+        setConfidence(data.confidence || 95);
+        setAnalysis(data.analysis || "Identity verified successfully");
         setState("success");
         
         // Stop camera
@@ -121,7 +208,7 @@ export default function FacialRecognitionModal({
       } else {
         setAttempts(attempts + 1);
         setConfidence(data.confidence || 0);
-        setAnalysis(data.analysis || "Faces do not match");
+        setAnalysis(data.analysis || data.error || "Faces do not match");
         
         if (attempts + 1 >= MAX_ATTEMPTS) {
           setState("failed");
@@ -138,8 +225,16 @@ export default function FacialRecognitionModal({
       }
     } catch (error: any) {
       console.error("[Verification] Error:", error);
-      toast.error(error.message || "Verification failed");
+      const errorMessage = error.message || "Verification failed. Please try again.";
+      toast.error(errorMessage);
       setState("camera");
+      
+      // If it's a critical error, stop camera
+      if (errorMessage.includes("not found") || errorMessage.includes("Session")) {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+        }
+      }
     }
   };
 

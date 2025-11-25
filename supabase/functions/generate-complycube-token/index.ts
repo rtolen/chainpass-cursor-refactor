@@ -4,11 +4,15 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { 
+      status: 204,
+      headers: corsHeaders 
+    });
   }
 
   try {
@@ -26,13 +30,14 @@ serve(async (req) => {
     
     console.log("✓ API Key validated");
     
-    const { sessionId, email, phoneNumber, firstName, lastName } = await req.json();
+    const { sessionId, email, user_email, phoneNumber, firstName, lastName } = await req.json();
     
     if (!sessionId) {
       throw new Error("sessionId is required");
     }
     
-    const finalEmail = email || `user-${sessionId.substring(0, 8)}@chainpass.temp`;
+    // Get email from user_email (POST body) or email, default to vairify1@gmail.com if blank
+    const finalEmail = user_email || email || "vairify1@gmail.com";
     
     // Create ComplyCube Client
     const clientPayload = {
@@ -44,6 +49,9 @@ serve(async (req) => {
       }
     };
     
+    console.log("Calling ComplyCube API: POST https://api.complycube.com/v1/clients");
+    console.log("Payload:", JSON.stringify(clientPayload, null, 2));
+    
     const clientResponse = await fetch("https://api.complycube.com/v1/clients", {
       method: "POST",
       headers: {
@@ -53,10 +61,24 @@ serve(async (req) => {
       body: JSON.stringify(clientPayload),
     });
 
+    console.log(`ComplyCube API response status: ${clientResponse.status}`);
+
     if (!clientResponse.ok) {
       const errorText = await clientResponse.text();
       console.error("✗ Client creation failed:", errorText);
-      throw new Error(`Client creation failed: ${clientResponse.status} - ${errorText}`);
+      console.error("Response status:", clientResponse.status);
+      console.error("Response headers:", Object.fromEntries(clientResponse.headers.entries()));
+      
+      // Try to parse error as JSON for better error message
+      let errorMessage = `Client creation failed: ${clientResponse.status}`;
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.message || errorJson.error || errorMessage;
+      } catch {
+        errorMessage = `${errorMessage} - ${errorText}`;
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const clientData = await clientResponse.json();
@@ -159,14 +181,26 @@ serve(async (req) => {
     console.error("═══ ComplyCube SDK Token Generation FAILED ═══");
     console.error("Error:", error);
     
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorDetails = error instanceof Error ? error.stack : String(error);
+    
+    console.error("Error message:", errorMessage);
+    console.error("Error details:", errorDetails);
+    
     return new Response(
       JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
+        error: errorMessage,
       }),
       {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 500,
+        headers: { 
+          ...corsHeaders, 
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+          "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+        },
       }
     );
   }

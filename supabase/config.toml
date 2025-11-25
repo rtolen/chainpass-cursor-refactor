@@ -1,4 +1,4 @@
-project_id = "pbxpkfotysozdmdophhg"
+project_id = "jgwmxzgeropjxwonnruz"
 
 [functions.create-payment-intent]
 verify_jwt = false
@@ -73,4 +73,7 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.create-complycube-flow-session]
+verify_jwt = false
+
+[functions.generate-complycube-token]
 verify_jwt = false

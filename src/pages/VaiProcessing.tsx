@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -14,6 +14,7 @@ import chainpassLogo from "@/assets/chainpass-logo.svg";
 import { supabase } from "@/integrations/supabase/client";
 import { sessionManager } from "@/utils/sessionManager";
 import { useVAIStore } from "@/store/vaiStore";
+import type { TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 
 type ProcessingState = "verifying" | "generating" | "complete";
 
@@ -27,9 +28,15 @@ const generateVAICode = (): string => {
 
 export default function VaiProcessing() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const [processingState, setProcessingState] = useState<ProcessingState>("verifying");
-  const [progress, setProgress] = useState(0);
+  
+  // Check if ComplyCube client ID is present - if so, skip verifying stage
+  const complycubeClientId = searchParams.get("complycube_client");
+  const [processingState, setProcessingState] = useState<ProcessingState>(
+    complycubeClientId ? "generating" : "verifying"
+  );
+  const [progress, setProgress] = useState(complycubeClientId ? 64 : 0);
   const [displayCode, setDisplayCode] = useState<string>("");
   const [verificationRecordId, setVerificationRecordId] = useState<string>("");
 
@@ -38,56 +45,94 @@ export default function VaiProcessing() {
 
   // Get V.A.I. store
   const { vaiNumber, setVAI, isGenerating, setGenerating } = useVAIStore();
+  
+  // Use ref to track if process has started to prevent re-running
+  const processStartedRef = useRef(false);
 
   // Process V.A.I. generation and save to database
   useEffect(() => {
     const processVAI = async () => {
+      console.log('processVAI called', { vaiNumber, isGenerating, processStarted: processStartedRef.current });
+      
       // CRITICAL: If V.A.I. already exists in store, use it
       if (vaiNumber) {
         console.log('V.A.I. already exists in store:', vaiNumber);
         const codeToDisplay = isLEO ? `LEO-${vaiNumber}` : vaiNumber;
         setDisplayCode(codeToDisplay);
         setProcessingState("complete");
+        processStartedRef.current = false; // Reset for potential future use
         return;
       }
 
-      // Check if generation already in progress
-      if (isGenerating) {
-        console.log('V.A.I. generation already in progress');
+      // Check if generation already in progress or if we've already started
+      if (isGenerating || processStartedRef.current) {
+        console.log('V.A.I. generation already in progress or started', { isGenerating, processStarted: processStartedRef.current });
         return;
       }
+      
+      // Mark as started
+      processStartedRef.current = true;
+      console.log('Starting VAI processing...');
 
       const sessionId = sessionManager.getSessionId();
       let recordId = sessionManager.getVerificationRecordId();
+      
+      console.log('Session info:', { sessionId, recordId, complycubeClientId });
 
       try {
         setGenerating(true);
 
         // Create or retrieve verification record
         if (!recordId) {
+          console.log('Creating new verification record...', { sessionId, complycubeClientId });
+          const insertPayload: TablesInsert<"verification_records"> = {
+            session_id: sessionId,
+            verification_status: "verified",
+            biometric_confirmed: true,
+          };
+
+          if (complycubeClientId) {
+            insertPayload.complycube_verification_id = complycubeClientId;
+          }
+
           const { data: newRecord, error: recordError } = await supabase
             .from('verification_records')
-            .insert({
-              session_id: sessionId,
-              verification_status: 'verified',
-              biometric_confirmed: true,
-            })
+            .insert(insertPayload)
             .select()
             .single();
 
-          if (recordError) throw recordError;
+          if (recordError) {
+            console.error('Error creating verification record:', recordError);
+            throw recordError;
+          }
+          
+          console.log('Verification record created:', newRecord.id);
           recordId = newRecord.id;
           sessionManager.setVerificationRecordId(recordId);
           setVerificationRecordId(recordId);
         } else {
+          console.log('Updating existing verification record...', { recordId, complycubeClientId });
           // Update existing record
-          await supabase
+          const updatePayload: TablesUpdate<"verification_records"> = {
+            biometric_confirmed: true,
+            verification_status: 'verified',
+          };
+
+          if (complycubeClientId) {
+            updatePayload.complycube_verification_id = complycubeClientId;
+          }
+
+          const { error: updateError } = await supabase
             .from('verification_records')
-            .update({
-              biometric_confirmed: true,
-              verification_status: 'verified',
-            })
+            .update(updatePayload)
             .eq('id', recordId);
+          
+          if (updateError) {
+            console.error('Error updating verification record:', updateError);
+            throw updateError;
+          }
+          
+          console.log('Verification record updated successfully');
           setVerificationRecordId(recordId);
         }
 
@@ -122,52 +167,102 @@ export default function VaiProcessing() {
           return;
         }
 
-        // Stage 1: Verifying identity
-        const stage1Timer = setTimeout(() => {
-          setProcessingState("generating");
-        }, 2500);
+        // Stage 1: Verifying identity (skip if ComplyCube client ID is present)
+        const stage1Timer = complycubeClientId 
+          ? null 
+          : setTimeout(() => {
+              setProcessingState("generating");
+            }, 2500);
+
+        // Ensure we have a recordId before proceeding
+        if (!recordId) {
+          console.error('No recordId available for VAI generation');
+          setGenerating(false);
+          processStartedRef.current = false;
+          toast({
+            title: "Error",
+            description: "Verification record not found. Please try again.",
+            variant: "destructive",
+          });
+          return;
+        }
 
         // Stage 2: Generate NEW V.A.I. and save to database
-        const stage2Timer = setTimeout(async () => {
-          const newVAICode = generateVAICode();
-          
-          // Save V.A.I. assignment to database
-          const { error: vaiError } = await supabase
-            .from('vai_assignments')
-            .insert({
-              vai_code: newVAICode,
-              verification_record_id: recordId,
-              status: 'complete',
-            });
+        // If ComplyCube client ID is present, start generating immediately
+        const stage2Delay = complycubeClientId ? 0 : 5000;
+        console.log('Setting up VAI generation timer', { stage2Delay, recordId });
+        
+        const generateAndSaveVAI = async () => {
+          try {
+            console.log('Starting VAI code generation...', { recordId });
+            const newVAICode = generateVAICode();
+            console.log('Generated VAI code:', newVAICode);
+            
+            // Save V.A.I. assignment to database
+            const { error: vaiError } = await supabase
+              .from('vai_assignments')
+              .insert({
+                vai_code: newVAICode,
+                verification_record_id: recordId,
+                status: 'complete',
+              });
 
-          if (vaiError) {
-            console.error('Error saving V.A.I.:', vaiError);
+            if (vaiError) {
+              console.error('Error saving V.A.I. to database:', vaiError);
+              toast({
+                title: "Error",
+                description: `Failed to generate V.A.I.: ${vaiError.message}`,
+                variant: "destructive",
+              });
+              setGenerating(false);
+              processStartedRef.current = false;
+              return;
+            }
+
+            console.log('VAI code saved successfully to database');
+            
+            // Store in Zustand and session
+            setVAI(newVAICode, recordId, isLEO);
+            sessionManager.setVaiCode(newVAICode);
+            sessionStorage.setItem('vai_number', newVAICode);
+            
+            // Set display code based on user type
+            const codeToDisplay = isLEO ? `LEO-${newVAICode}` : newVAICode;
+            setDisplayCode(codeToDisplay);
+            
+            setProcessingState("complete");
+            processStartedRef.current = false; // Reset for potential future use
+            
+            // Trigger celebration
+            toast({
+              title: "✓ V.A.I. Confirmed!",
+              description: "Verification complete. Continue to legal agreements.",
+            });
+          } catch (error) {
+            console.error('Error in generateAndSaveVAI:', error);
+            setGenerating(false);
+            processStartedRef.current = false;
             toast({
               title: "Error",
-              description: "Failed to generate V.A.I. Please try again.",
+              description: error instanceof Error ? error.message : "Failed to generate V.A.I.",
               variant: "destructive",
             });
-            setGenerating(false);
-            return;
           }
+        };
 
-          // Store in Zustand and session
-          setVAI(newVAICode, recordId, isLEO);
-          sessionManager.setVaiCode(newVAICode);
-          sessionStorage.setItem('vai_number', newVAICode);
-          
-          // Set display code based on user type
-          const codeToDisplay = isLEO ? `LEO-${newVAICode}` : newVAICode;
-          setDisplayCode(codeToDisplay);
-          
-          setProcessingState("complete");
-          
-          // Trigger celebration
-          toast({
-            title: "✓ V.A.I. Confirmed!",
-            description: "Verification complete. Continue to legal agreements.",
-          });
-        }, 5000);
+        // If delay is 0, call immediately, otherwise use setTimeout
+        const stage2Timer = stage2Delay === 0 
+          ? null 
+          : setTimeout(() => {
+              console.log('Stage 2 timer fired, calling generateAndSaveVAI');
+              generateAndSaveVAI();
+            }, stage2Delay);
+        
+        if (stage2Delay === 0) {
+          // Call immediately for ComplyCube flow
+          console.log('Calling generateAndSaveVAI immediately (ComplyCube flow)');
+          generateAndSaveVAI();
+        }
 
         // Progress animation
         const progressInterval = setInterval(() => {
@@ -181,22 +276,29 @@ export default function VaiProcessing() {
         }, 100);
 
         return () => {
-          clearTimeout(stage1Timer);
-          clearTimeout(stage2Timer);
+          if (stage1Timer) clearTimeout(stage1Timer);
+          if (stage2Timer) clearTimeout(stage2Timer);
           clearInterval(progressInterval);
         };
       } catch (error) {
         console.error('Error processing V.A.I.:', error);
+        setGenerating(false);
+        processStartedRef.current = false; // Reset on error
         toast({
           title: "Error",
-          description: "Failed to process verification. Please try again.",
+          description: error instanceof Error ? error.message : "Failed to process verification. Please try again.",
           variant: "destructive",
         });
+      } finally {
+        // Ensure generating flag is reset if we exit early
+        // Note: setVAI already sets isGenerating to false, so this is just a safety net
       }
     };
 
     processVAI();
-  }, [toast]);
+    // Note: isGenerating is intentionally excluded from dependencies to prevent re-running
+    // when setGenerating(true) is called, which would clear timers prematurely
+  }, [toast, complycubeClientId, vaiNumber, isLEO, setVAI, setGenerating]);
 
   const handleContinueToVairify = () => {
     // Navigate to LEO declaration
