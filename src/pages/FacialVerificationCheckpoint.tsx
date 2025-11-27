@@ -48,6 +48,14 @@ export default function FacialVerificationCheckpoint() {
     }
   };
 
+  const attachStreamToVideo = () => {
+    if (videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      return true;
+    }
+    return false;
+  };
+
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -58,17 +66,23 @@ export default function FacialVerificationCheckpoint() {
         },
       });
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        streamRef.current = mediaStream;
-        setCameraActive(true);
-        setVerificationStatus('verifying');
-        
-        // Auto-capture after 2 seconds
+      streamRef.current = mediaStream;
+      setCameraActive(true);
+      setVerificationStatus('verifying');
+
+      const ensureVideoReady = () => {
+        if (!attachStreamToVideo()) {
+          requestAnimationFrame(ensureVideoReady);
+          return;
+        }
+
+        // Auto-capture after 2 seconds once the video element has the stream
         setTimeout(() => {
           captureAndVerify();
         }, 2000);
-      }
+      };
+
+      ensureVideoReady();
     } catch (error) {
       console.error("Camera access error:", error);
       toast.error("Unable to access camera. Please enable camera permissions.");
