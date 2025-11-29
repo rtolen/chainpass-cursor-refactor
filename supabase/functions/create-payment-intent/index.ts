@@ -20,10 +20,16 @@ serve(async (req) => {
   try {
     console.log("[CREATE-PAYMENT-INTENT] Function started");
 
-    // Initialize Stripe with secret key
+    // Initialize Stripe with keys
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+    const stripePublishableKey = Deno.env.get("STRIPE_PUBLISHABLE_KEY");
+
     if (!stripeKey) {
       throw new Error("STRIPE_SECRET_KEY is not configured");
+    }
+
+    if (!stripePublishableKey) {
+      console.warn("[CREATE-PAYMENT-INTENT] STRIPE_PUBLISHABLE_KEY not configured – client may not be able to render card input.");
     }
 
     const stripe = new Stripe(stripeKey, {
@@ -109,6 +115,7 @@ serve(async (req) => {
       JSON.stringify({
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
+        publishableKey: stripePublishableKey ?? null,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -149,6 +149,7 @@ serve(async (req) => {
       .from("verification_records")
       .update({
         complycube_client_id: clientData.id,
+        email: finalEmail,
         updated_at: new Date().toISOString(),
       })
       .eq("session_id", sessionId);

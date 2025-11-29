@@ -152,6 +152,7 @@ serve(async (req) => {
       .update({
         complycube_client_id: clientData.id,
         complycube_session_id: sessionData.id,
+        email: finalEmail,
         updated_at: new Date().toISOString(),
       })
       .eq("session_id", sessionId);

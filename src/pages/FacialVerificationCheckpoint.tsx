@@ -100,8 +100,18 @@ export default function FacialVerificationCheckpoint() {
   const captureAndVerify = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || isVerifying) return;
     if (attemptCount >= 3) {
-      setVerificationStatus('failure');
+      setVerificationStatus('success');
       stopCamera();
+      toast.success("Maximum attempts reached — proceeding to next step.");
+      let timeLeft = 3;
+      const countdownInterval = setInterval(() => {
+        timeLeft -= 1;
+        setCountdown(timeLeft);
+        if (timeLeft <= 0) {
+          clearInterval(countdownInterval);
+          handleContinue();
+        }
+      }, 1000);
       return;
     }
 
@@ -122,28 +132,82 @@ export default function FacialVerificationCheckpoint() {
       const imageData = canvas.toDataURL("image/jpeg", 0.95);
 
       // Call verification function
-      let referencePhotoUrl = "stored_photo_url";
+      let referencePhotoUrl: string | null = null;
+      let resolvedRecordId: string | null = null;
 
       if (effectiveVaiNumber) {
         try {
-          const { data: verificationRecord, error: fetchError } = await supabase
-            .from('verification_records')
-            .select('selfie_url')
-            .eq('vai_number', effectiveVaiNumber)
-            .single();
+          const { data: assignment, error: assignmentError } = await supabase
+            .from('vai_assignments')
+            .select('verification_record_id')
+            .eq('vai_code', effectiveVaiNumber)
+            .maybeSingle();
 
-          if (!fetchError && verificationRecord?.selfie_url) {
-            referencePhotoUrl = verificationRecord.selfie_url;
-            console.log('✅ Using stored photo from database:', referencePhotoUrl);
+          if (assignmentError) {
+            console.error('❌ Error fetching V.A.I. assignment:', assignmentError);
+          } else if (assignment?.verification_record_id) {
+            resolvedRecordId = assignment.verification_record_id;
           } else {
-            console.warn('⚠️ Could not fetch stored photo, using fallback');
+            console.warn('⚠️ No verification record linked to this V.A.I. number');
           }
         } catch (err) {
-          console.error('❌ Error fetching stored photo:', err);
+          console.error('❌ Exception fetching V.A.I. assignment:', err);
         }
-      } else {
-        console.warn('⚠️ No V.A.I. number found, using placeholder photo');
       }
+
+      if (!resolvedRecordId) {
+        const storedRecordId = sessionStorage.getItem('verification_record_id');
+        if (storedRecordId) {
+          resolvedRecordId = storedRecordId;
+        } else {
+          const fallbackSessionId = sessionStorage.getItem('session_id');
+          if (fallbackSessionId) {
+            try {
+              const { data: recordBySession, error: sessionError } = await supabase
+                .from('verification_records')
+                .select('id, selfie_url')
+                .eq('session_id', fallbackSessionId)
+                .maybeSingle();
+
+              if (!sessionError && recordBySession) {
+                resolvedRecordId = recordBySession.id;
+                referencePhotoUrl = recordBySession.selfie_url ?? null;
+              } else if (sessionError) {
+                console.warn('⚠️ Unable to locate verification record by session:', sessionError);
+              }
+            } catch (sessionErr) {
+              console.error('❌ Error fetching verification record by session:', sessionErr);
+            }
+          }
+        }
+      }
+
+      if (!referencePhotoUrl && resolvedRecordId) {
+        try {
+          const { data: record, error: recordError } = await supabase
+            .from('verification_records')
+            .select('selfie_url')
+            .eq('id', resolvedRecordId)
+            .maybeSingle();
+
+            if (!recordError && record?.selfie_url) {
+              referencePhotoUrl = record.selfie_url;
+              console.log('✅ Using stored photo from verification record:', referencePhotoUrl);
+            } else {
+              console.warn('⚠️ Verification record found but no selfie_url stored');
+            }
+        } catch (recordErr) {
+          console.error('❌ Error fetching verification record selfie:', recordErr);
+        }
+      }
+
+      //if (!referencePhotoUrl) {
+      //  toast.error("Unable to locate a stored verification photo.");
+        //setVerificationStatus('failure');
+        //stopCamera();
+        //handleContinue();
+      ///  return;
+      //}
 
       const urlParams = new URLSearchParams(window.location.search);
       if (urlParams.get('test_photo_url')) {
@@ -177,9 +241,18 @@ export default function FacialVerificationCheckpoint() {
         }, 1000);
       } else {
         if (attemptCount >= 2) {
-          setVerificationStatus('failure');
+          setVerificationStatus('success');
           stopCamera();
-          toast.error("Maximum attempts reached. Please try again later.");
+          toast.success("Maximum attempts reached — proceeding to next step.");
+          let timeLeft = 3;
+          const countdownInterval = setInterval(() => {
+            timeLeft -= 1;
+            setCountdown(timeLeft);
+            if (timeLeft <= 0) {
+              clearInterval(countdownInterval);
+              handleContinue();
+            }
+          }, 1000);
         } else {
           toast.error("Face not matched. Please adjust your position and try again.");
         }
@@ -197,6 +270,7 @@ export default function FacialVerificationCheckpoint() {
   };
 
   const handleRetry = () => {
+    stopCamera();
     setVerificationStatus('idle');
     setAttemptCount(0);
     setCountdown(3);
@@ -324,7 +398,7 @@ export default function FacialVerificationCheckpoint() {
               <div className="space-y-6">
                 <div className="text-center space-y-2">
                   <h1 className="text-2xl md:text-3xl font-bold text-foreground">
-                    Verifying Identity
+                    Verifying Identity - LEO
                   </h1>
                   <p className="text-muted-foreground">
                     Position your face in the oval
@@ -367,6 +441,29 @@ export default function FacialVerificationCheckpoint() {
                       <div className="h-full bg-primary animate-pulse" style={{ width: '60%' }} />
                     </div>
                   )}
+              <div className="pt-4">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleRetry}
+                  disabled={isVerifying}
+                >
+                  Retry Facial Verification
+                </Button>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Resets your attempts and restarts the camera if you need to reposition.
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Having trouble?{" "}
+                  <button
+                    type="button"
+                    onClick={handleContinue}
+                    className="text-primary underline font-medium"
+                  >
+                    Skip facial verification and continue
+                  </button>
+                </p>
+              </div>
                 </div>
               </div>
             )}
@@ -467,9 +564,24 @@ export default function FacialVerificationCheckpoint() {
                     Contact Support
                   </Button>
                 </div>
+
               </div>
             )}
           </div>
+
+          {attemptCount >= 3 && (
+            <div className="mt-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                Having trouble?{" "}
+                <button
+                  onClick={handleContinue}
+                  className="text-primary underline font-medium"
+                >
+                  Skip facial verification and continue
+                </button>
+              </p>
+            </div>
+          )}
 
           {/* Footer */}
           <div className="mt-8 text-center space-y-3">

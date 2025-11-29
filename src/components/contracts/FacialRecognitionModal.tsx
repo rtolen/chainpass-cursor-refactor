@@ -10,6 +10,7 @@ interface FacialRecognitionModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onVerificationSuccess: () => void;
+  title?: string;
 }
 
 type RecognitionState = "camera" | "processing" | "success" | "failed";
@@ -18,6 +19,7 @@ export default function FacialRecognitionModal({
   open,
   onOpenChange,
   onVerificationSuccess,
+  title,
 }: FacialRecognitionModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -251,7 +253,7 @@ export default function FacialRecognitionModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Camera className="h-5 w-5" />
-            Facial Recognition Verification
+            {title || "Facial Recognition Verification"}
           </DialogTitle>
         </DialogHeader>
 

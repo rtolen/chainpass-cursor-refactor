@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { ContractViewer } from "@/components/contracts/ContractViewer";
-import { FacialVerification } from "@/components/contracts/FacialVerification";
 import { SignatureConfirmation } from "@/components/contracts/SignatureConfirmation";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -9,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 import { useVAIStore } from "@/store/vaiStore";
 import { toast } from "sonner";
+import FacialRecognitionModal from "@/components/contracts/FacialRecognitionModal";
 
 type Step = "contract" | "verification" | "confirmation";
 
@@ -19,6 +19,7 @@ export default function ContractSignature() {
   const [facialConfidence, setFacialConfidence] = useState<number | null>(null);
   const [signedContract, setSignedContract] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isVerificationModalOpen, setVerificationModalOpen] = useState(false);
 
   // Get session data
   const { vaiNumber: storeVAI } = useVAIStore();
@@ -199,26 +200,71 @@ export default function ContractSignature() {
             </>
           )}
 
-          {currentStep === "verification" && (
-            <>
-              <FacialVerification
-                vaiNumber={vaiNumber}
-                contractType={contractType}
-                onVerificationSuccess={handleVerificationSuccess}
-                onVerificationFailed={handleVerificationFailed}
-              />
-              <div className="flex justify-between">
-                <Button
-                  onClick={() => setCurrentStep("contract")}
-                  variant="outline"
-                  size="lg"
-                >
-                  <ArrowLeft className="w-5 h-5 mr-2" />
-                  Back to Contract
-                </Button>
+        {currentStep === "verification" && (
+          <>
+            <div className="relative">
+              <div className="absolute -inset-[1px] bg-gradient-to-r from-blue-500/20 to-purple-600/20 rounded-xl blur-sm"></div>
+              <div className="relative bg-card/80 backdrop-blur rounded-xl border border-border/50 p-8 space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">
+                      Step 2 • Required
+                    </p>
+                    <h2 className="text-2xl font-bold">Facial Recognition</h2>
+                    <p className="text-muted-foreground">
+                      Confirm your identity before applying your digital signature to the contract.
+                    </p>
+                  </div>
+                  {facialConfidence && (
+                    <div className="px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-sm font-semibold">
+                      ✓ Verified (Confidence: {facialConfidence}%)
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc ml-5">
+                    <li>Ensure you are in a well-lit environment</li>
+                    <li>Align your face in the oval guide during the scan</li>
+                    <li>Your live photo will be compared to your original verification record</li>
+                  </ul>
+                  <Button
+                    size="lg"
+                    className="h-12 px-8 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                    onClick={() => setVerificationModalOpen(true)}
+                    disabled={!!facialConfidence}
+                  >
+                    {facialConfidence ? "Verification Complete" : "Start Facial Recognition"}
+                  </Button>
+                </div>
+
+                {!facialConfidence && (
+                  <p className="text-xs text-amber-300">
+                    Note: Facial verification is mandatory before you can sign.
+                  </p>
+                )}
               </div>
-            </>
-          )}
+            </div>
+
+            <FacialRecognitionModal
+              open={isVerificationModalOpen}
+              onOpenChange={setVerificationModalOpen}
+              onVerificationSuccess={() => handleVerificationSuccess(95)}
+              title="Digital Contract Signature - Face Verification"
+            />
+
+            <div className="flex justify-between">
+              <Button
+                onClick={() => setCurrentStep("contract")}
+                variant="outline"
+                size="lg"
+              >
+                <ArrowLeft className="w-5 h-5 mr-2" />
+                Back to Contract
+              </Button>
+            </div>
+          </>
+        )}
 
           {currentStep === "confirmation" && signedContract && (
             <SignatureConfirmation

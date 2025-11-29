@@ -14,8 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
-const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined;
-const stripePromise = stripePublishableKey ? loadStripe(stripePublishableKey) : null;
+const initialPublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined;
 
 type PaymentMethod = "card" | "paypal" | "crypto";
 
@@ -30,6 +29,10 @@ export default function PaymentForm() {
   const [finalPrice, setFinalPrice] = useState(99.00);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loadingPaymentIntent, setLoadingPaymentIntent] = useState(false);
+  const [stripePromise, setStripePromise] = useState(() =>
+    initialPublishableKey ? loadStripe(initialPublishableKey) : null
+  );
+  const [stripeUnavailable, setStripeUnavailable] = useState(false);
 
   const isFullyDiscounted = appliedCoupon?.discount_percentage === 100;
 
@@ -73,6 +76,15 @@ export default function PaymentForm() {
       if (data?.clientSecret) {
         setClientSecret(data.clientSecret);
       }
+
+      if (!initialPublishableKey && data?.publishableKey && !stripePromise) {
+        setStripePromise(loadStripe(data.publishableKey));
+        setStripeUnavailable(false);
+      }
+
+      if (!initialPublishableKey && !data?.publishableKey) {
+        setStripeUnavailable(true);
+      }
     } catch (error: any) {
       console.error("Error creating payment intent:", error);
       toast({ 
@@ -80,6 +92,9 @@ export default function PaymentForm() {
         description: "Unable to initialize payment. Please try again.", 
         variant: "destructive" 
       });
+      if (error.message?.includes("STRIPE_SECRET_KEY") || error.message?.includes("publishable")) {
+        setStripeUnavailable(true);
+      }
     } finally {
       setLoadingPaymentIntent(false);
     }
@@ -127,6 +142,12 @@ export default function PaymentForm() {
       setValidatingCoupon(false);
     }
   };
+
+  const shouldRenderStripeForm =
+    !isFullyDiscounted &&
+    stripePromise &&
+    clientSecret &&
+    (paymentMethod === "card" || paymentMethod === "paypal");
 
   return (
     <div className="min-h-screen bg-background py-8 px-4">
@@ -197,14 +218,26 @@ export default function PaymentForm() {
                     <Alert className="border-success bg-success/10"><AlertDescription className="text-success"><p className="font-semibold mb-2">Payment Not Required</p>Your 100% discount covers the full cost.</AlertDescription></Alert>
                     <Button onClick={async () => { const sessionId = sessionStorage.getItem("session_id"); await supabase.functions.invoke("record-coupon-usage", { body: { couponId: appliedCoupon.id, sessionId, userEmail: sessionStorage.getItem("user_email") } }); sessionStorage.setItem("payment_status", "completed_comp"); navigate("/verification-transition"); }} className="w-full" size="lg">Continue to Verification</Button>
                   </div>
-                ) : stripePromise && clientSecret && (paymentMethod === "card" || paymentMethod === "paypal") ? (
+                ) : shouldRenderStripeForm ? (
                   <Elements stripe={stripePromise} options={{ clientSecret }}><StripePaymentForm paymentMethod={paymentMethod} amount={finalPrice} appliedCoupon={appliedCoupon} clientSecret={clientSecret} /></Elements>
                 ) : loadingPaymentIntent ? (
                   <div className="text-center py-8">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
                     <p className="text-muted-foreground">Setting up payment...</p>
                   </div>
-                ) : null}
+                ) : stripeUnavailable ? (
+                  <Alert className="border-destructive bg-destructive/10">
+                    <AlertDescription className="text-destructive">
+                      We can’t load the secure payment form because Stripe isn’t fully configured. Please contact support or try again later.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert className="bg-warning/10 border border-warning/20">
+                    <AlertDescription className="text-warning">
+                      We’re still waiting on the payment form to load. If this persists, refresh the page or contact support.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </CardContent>
             </Card>
           </div>

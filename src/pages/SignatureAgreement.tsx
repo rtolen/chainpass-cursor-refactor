@@ -4,13 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Lock, AlertTriangle, CheckCircle2, Shield, Loader2 } from "lucide-react";
 import chainpassLogo from "@/assets/chainpass-logo.svg";
-import { LeoFacialVerification } from "@/components/LeoFacialVerification";
+import FacialRecognitionModal from "@/components/contracts/FacialRecognitionModal";
 import { toast } from "sonner";
 
 export default function SignatureAgreement() {
   const navigate = useNavigate();
   const [isVerified, setIsVerified] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isVerificationModalOpen, setVerificationModalOpen] = useState(false);
   const [checkboxes, setCheckboxes] = useState({
     read: false,
     authorize: false,
@@ -25,6 +26,8 @@ export default function SignatureAgreement() {
 
   const handleVerificationSuccess = () => {
     setIsVerified(true);
+    setVerificationModalOpen(false);
+    toast.success("Facial verification complete");
   };
 
   const handleCheckboxChange = (key: keyof typeof checkboxes) => {
@@ -81,7 +84,49 @@ export default function SignatureAgreement() {
         </div>
 
         {/* SECTION 2: Facial Verification */}
-        <LeoFacialVerification onVerificationSuccess={handleVerificationSuccess} />
+        <div className="relative">
+          <div className="absolute -inset-[1px] bg-gradient-to-r from-blue-500/20 to-purple-600/20 rounded-xl blur-sm"></div>
+          <div className="relative bg-[#1F2937]/80 backdrop-blur-lg rounded-xl p-8 border border-gray-700/50 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <p className="text-sm text-gray-400 uppercase tracking-[0.3em]">Step 1 • Required</p>
+                <h2 className="text-2xl font-bold text-white">Facial Verification</h2>
+                <p className="text-gray-300">
+                  Confirm your identity before reviewing and signing the legal agreement.
+                </p>
+              </div>
+              {isVerified && (
+                <div className="px-4 py-2 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-sm font-semibold text-center">
+                  ✓ Verification Completed
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <p className="text-sm text-gray-400 md:max-w-xl">
+                Clicking “Start Verification” will open a secure face scan powered by ComplyCube. We’ll compare your live photo with your original verification record.
+              </p>
+              <Button
+                onClick={() => setVerificationModalOpen(true)}
+                disabled={isVerified}
+                className="h-12 text-lg px-8 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+              >
+                {isVerified ? "Verification Complete" : "Start Verification"}
+              </Button>
+            </div>
+            {!isVerified && (
+              <p className="text-xs text-amber-300 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                You must complete face verification before the agreement unlocks.
+              </p>
+            )}
+          </div>
+        </div>
+        <FacialRecognitionModal
+          open={isVerificationModalOpen}
+          onOpenChange={setVerificationModalOpen}
+          onVerificationSuccess={handleVerificationSuccess}
+          title="Legal Agreement - Face Verification"
+        />
 
         {/* SECTION 3: Agreement Checkboxes */}
         <div className="relative">

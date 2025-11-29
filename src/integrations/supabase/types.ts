@@ -2589,6 +2589,10 @@ export type Database = {
         Row: {
           biometric_confirmed: boolean | null
           complycube_verification_id: string | null
+          request_photo_url: string | null
+          live_photo_id: string | null
+          get_photo_url: string | null
+          email: string | null
           created_at: string
           id: string
           id_document_url: string | null
@@ -2600,6 +2604,10 @@ export type Database = {
         Insert: {
           biometric_confirmed?: boolean | null
           complycube_verification_id?: string | null
+          request_photo_url?: string | null
+          live_photo_id?: string | null
+          get_photo_url?: string | null
+          email?: string | null
           created_at?: string
           id?: string
           id_document_url?: string | null
@@ -2611,6 +2619,10 @@ export type Database = {
         Update: {
           biometric_confirmed?: boolean | null
           complycube_verification_id?: string | null
+          request_photo_url?: string | null
+          live_photo_id?: string | null
+          get_photo_url?: string | null
+          email?: string | null
           created_at?: string
           id?: string
           id_document_url?: string | null
