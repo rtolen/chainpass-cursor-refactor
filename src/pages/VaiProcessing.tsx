@@ -20,6 +20,7 @@ import {
 import chainpassLogo from "@/assets/chainpass-logo.svg";
 import { supabase } from "@/integrations/supabase/client";
 import { sessionManager } from "@/utils/sessionManager";
+import { getComplyCubePhoto } from "@/services/getComplyCubePhoto";
 import { useVAIStore } from "@/store/vaiStore";
 import type { TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 
@@ -86,8 +87,6 @@ export default function VaiProcessing() {
   const [requestComplyCubeDownloadURL, setRequestComplyCubeDownloadURL] = useState<string>(
     COMPLYCUBE_DOWNLOAD_TEMPLATE
   );
-  const [downloadRequestLoading, setDownloadRequestLoading] = useState(false);
-  const [complycubeDownloadLog, setComplycubeDownloadLog] = useState<ComplycubeRequestLog | null>(null);
   const [debugLogs] = useState<DebugLogEntry[]>([]);
 
   // Check if user is LEO from session storage
@@ -100,7 +99,7 @@ export default function VaiProcessing() {
   const processStartedRef = useRef(false);
 
   const authorizationRequestFetchedRef = useRef(false);
-  const downloadRequestFetchedRef = useRef(false);
+  const complycubePhotoDownloadRequestedRef = useRef(false);
 
   const appendDebugLogs = useCallback((_entries: DebugLogEntry[]) => {}, []);
   const handleClearDebugLogs = useCallback(() => {
@@ -237,68 +236,32 @@ const buildDownloadRequestPreview = (url: string, authHeader: string) => {
 
   useEffect(() => {
     if (processingState !== "complete") return;
-    if (!complycubeAuthorizationKey) return;
-    if (
-      !requestComplyCubeDownloadURL ||
-      requestComplyCubeDownloadURL.includes("{photoID}")
-    )
-      return;
-    if (downloadRequestFetchedRef.current) return;
+    if (!requestPhotoId || requestPhotoId.includes("{photoID}")) return;
+    if (complycubePhotoDownloadRequestedRef.current) return;
 
-    const fetchDownloadUrl = async () => {
-      downloadRequestFetchedRef.current = true;
-      setDownloadRequestLoading(true);
+    const fetchVerificationPhoto = async () => {
+      complycubePhotoDownloadRequestedRef.current = true;
+      setPhotoLoading(true);
 
       try {
-        const response = await fetch(requestComplyCubeDownloadURL, {
-          method: "GET",
-          headers: {
-            Authorization: complycubeAuthorizationKey,
-          },
-        });
-
-        const contentType = response.headers.get("content-type") || "";
-        let bodyText = "";
-
-        if (contentType.includes("application/json")) {
-          const json = await response.json();
-          bodyText = JSON.stringify(json, null, 2);
-        } else {
-          const buffer = await response.arrayBuffer();
-          bodyText = `Binary response (${contentType || "unknown"}, ${buffer.byteLength} bytes)`;
-        }
-
-        setComplycubeDownloadLog({
-          requestUrl: requestComplyCubeDownloadURL,
-          method: "GET",
-          headers: {
-            Authorization: complycubeAuthorizationKey,
-          },
-          responseStatus: response.status,
-          responseBody: bodyText || "(empty response)",
-          timestamp: new Date().toISOString(),
-        });
+        const { base64 } = await getComplyCubePhoto(requestPhotoId);
+        setPhotoDataUrl(base64);
+        setPhotoModalOpen(true);
       } catch (error) {
-        setComplycubeDownloadLog({
-          requestUrl: requestComplyCubeDownloadURL,
-          method: "GET",
-          headers: {
-            Authorization: complycubeAuthorizationKey,
-          },
-          error: error instanceof Error ? error.message : String(error),
-          timestamp: new Date().toISOString(),
+        console.error("Failed to download ComplyCube photo:", error);
+        toast({
+          title: "Verification photo unavailable",
+          description: error instanceof Error ? error.message : "Unable to display verification photo.",
+          variant: "destructive",
         });
+        complycubePhotoDownloadRequestedRef.current = false;
       } finally {
-        setDownloadRequestLoading(false);
+        setPhotoLoading(false);
       }
     };
 
-    fetchDownloadUrl();
-  }, [
-    processingState,
-    requestComplyCubeDownloadURL,
-    complycubeAuthorizationKey,
-  ]);
+    fetchVerificationPhoto();
+  }, [processingState, requestPhotoId, toast]);
 
   const loadVerificationRecordDetails = useCallback(async (recordIdToLoad: string) => {
     try {
@@ -1027,9 +990,6 @@ const buildDownloadRequestPreview = (url: string, authHeader: string) => {
                   : requestComplyCubeDownloadURL}
               </span>
             </p>
-            {downloadRequestLoading && (
-              <p className="text-amber-300 text-xs mt-2">Requesting ComplyCube photo download...</p>
-            )}
           <div className="text-xs mt-3">
             <p className="font-semibold text-gray-300 mb-1">
               ComplyCube Photo Download Request (GET)
@@ -1041,46 +1001,6 @@ const buildDownloadRequestPreview = (url: string, authHeader: string) => {
               )}
             </pre>
           </div>
-            {complycubeDownloadLog && (
-              <div className="space-y-2 mt-3">
-                <p className="text-xs text-gray-400">
-                  Status:{" "}
-                  <span className="text-white font-mono">
-                    {complycubeDownloadLog.responseStatus ?? "N/A"}
-                  </span>{" "}
-                  • Timestamp:{" "}
-                  <span className="text-white font-mono">{complycubeDownloadLog.timestamp}</span>
-                </p>
-                <div className="text-xs">
-                  <p className="font-semibold text-gray-300 mb-1">Request</p>
-                  <pre className="bg-black/40 border border-gray-800 rounded-lg p-3 text-white whitespace-pre-wrap break-all overflow-x-auto">
-                    {`${complycubeDownloadLog.method || "GET"} ${complycubeDownloadLog.requestUrl}\n\nHeaders:\n${formatHeaders(
-                      complycubeDownloadLog.headers || {}
-                    )}`}
-                  </pre>
-                </div>
-                {complycubeDownloadLog.error ? (
-                  <div className="text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs">
-                    <p className="font-semibold mb-1">Request Error</p>
-                    <pre className="whitespace-pre-wrap break-all">
-                      {complycubeDownloadLog.error}
-                    </pre>
-                  </div>
-                ) : (
-                  <div className="text-xs">
-                    <p className="font-semibold text-gray-300 mb-1">Response Body</p>
-                    <pre className="bg-black/40 border border-gray-800 rounded-lg p-3 text-white whitespace-pre-wrap break-all overflow-x-auto max-h-72">
-                      {complycubeDownloadLog.responseBody}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )}
-            {!downloadRequestLoading && !complycubeDownloadLog && (
-              <p className="text-xs text-gray-500 mt-2">
-                Download request will run after a photo ID is available and will show up here.
-              </p>
-            )}
           </div>
         </div>
 

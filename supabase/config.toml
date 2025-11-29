@@ -81,6 +81,9 @@ verify_jwt = false
 [functions.generate-complycube-token]
 verify_jwt = false
 
+[functions.get-comply-cube-photo]
+verify_jwt = false
+
 [functions.getComplyCubePhoto]
 enabled = true
 verify_jwt = true
@@ -91,3 +94,14 @@ entrypoint = "./functions/getComplyCubePhoto/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/getComplyCubePhoto/*.html" ]
+
+[functions.download-photo]
+enabled = true
+verify_jwt = false
+import_map = "./functions/download-photo/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/download-photo/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/download-photo/*.html" ]

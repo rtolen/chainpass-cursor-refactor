@@ -1,10 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Camera, Loader2, CheckCircle2, AlertTriangle, X } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { Camera, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
-import { sessionManager } from "@/utils/sessionManager";
+import { getComplyCubePhoto } from "@/services/getComplyCubePhoto";
 
 interface FacialRecognitionModalProps {
   open: boolean;
@@ -14,6 +13,44 @@ interface FacialRecognitionModalProps {
 }
 
 type RecognitionState = "camera" | "processing" | "success" | "failed";
+const MAX_ATTEMPTS = 3;
+const ANALYSIS_CANVAS_SIZE = 48;
+const MATCH_THRESHOLD = 20;
+
+const loadImageData = (source: string): Promise<ImageData> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = ANALYSIS_CANVAS_SIZE;
+      canvas.height = ANALYSIS_CANVAS_SIZE;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Unable to create canvas context"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, ANALYSIS_CANVAS_SIZE, ANALYSIS_CANVAS_SIZE);
+      resolve(ctx.getImageData(0, 0, ANALYSIS_CANVAS_SIZE, ANALYSIS_CANVAS_SIZE));
+    };
+    img.onerror = () => reject(new Error("Failed to load reference photo"));
+    img.src = source;
+  });
+
+const calculateSimilarityScore = async (imageA: string, imageB: string): Promise<number> => {
+  const [dataA, dataB] = await Promise.all([loadImageData(imageA), loadImageData(imageB)]);
+  let diff = 0;
+
+  for (let i = 0; i < dataA.data.length; i += 4) {
+    diff += Math.abs(dataA.data[i] - dataB.data[i]);
+    diff += Math.abs(dataA.data[i + 1] - dataB.data[i + 1]);
+    diff += Math.abs(dataA.data[i + 2] - dataB.data[i + 2]);
+  }
+
+  const maxDiff = (dataA.data.length / 4) * 255 * 3;
+  const similarity = 100 - (diff / maxDiff) * 100;
+  return Math.max(0, Math.min(100, similarity));
+};
 
 export default function FacialRecognitionModal({
   open,
@@ -26,32 +63,42 @@ export default function FacialRecognitionModal({
   const streamRef = useRef<MediaStream | null>(null);
 
   const [state, setState] = useState<RecognitionState>("camera");
-  const [confidence, setConfidence] = useState<number>(0);
   const [attempts, setAttempts] = useState(0);
-  const [analysis, setAnalysis] = useState<string>("");
-  const MAX_ATTEMPTS = 3;
+  const [similarityScore, setSimilarityScore] = useState<number | null>(null);
+  const [referencePhotoDataUrl, setReferencePhotoDataUrl] = useState<string | null>(null);
+  const [referencePhotoLoading, setReferencePhotoLoading] = useState(false);
+  const [complycubePhotoId, setComplycubePhotoId] = useState<string | null>(null);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (open) {
-      startCamera();
-    }
-    return () => {
-      // Cleanup camera when modal closes
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+      const storedPhotoId = sessionStorage.getItem("complycube_request_photo_id");
+      if (storedPhotoId) {
+        setComplycubePhotoId(storedPhotoId);
+      } else {
+        toast.error("ComplyCube photo unavailable. Complete verification first.");
       }
-    };
-  }, [open]);
+    } else {
+      stopCamera();
+      setReferencePhotoDataUrl(null);
+      setSimilarityScore(null);
+      setAttempts(0);
+      setState("camera");
+    }
+  }, [open, stopCamera, toast]);
 
-  const startCamera = async () => {
+  const startCamera = useCallback(async () => {
     try {
-      // Check if mediaDevices is available
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Camera API not supported in this browser");
       }
 
-      console.log("[Camera] Requesting camera access...");
-      
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
           facingMode: "user", 
@@ -60,45 +107,42 @@ export default function FacialRecognitionModal({
         },
       });
       
-      if (!stream || stream.getVideoTracks().length === 0) {
-        throw new Error("No video track available from camera");
-      }
-
-      console.log("[Camera] Camera access granted");
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        streamRef.current = stream;
-        setState("camera");
-        
-        // Wait for video to be ready
-        videoRef.current.onloadedmetadata = () => {
-          console.log("[Camera] Video ready, dimensions:", 
-            videoRef.current?.videoWidth, "x", videoRef.current?.videoHeight);
-        };
-      } else {
-        // Clean up if video ref is not available
+      if (!videoRef.current) {
         stream.getTracks().forEach(track => track.stop());
         throw new Error("Video element not available");
       }
+
+      streamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      setState("camera");
     } catch (error: any) {
-      console.error("[Camera] Error:", error);
-      let errorMessage = "Camera access denied. Please enable camera permissions.";
-      
-      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-        errorMessage = "Camera permission denied. Please allow camera access in your browser settings.";
-      } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-        errorMessage = "No camera found. Please connect a camera and try again.";
-      } else if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-        errorMessage = "Camera is already in use by another application.";
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      toast.error(errorMessage);
+      toast.error(error.message || "Unable to access camera");
       setState("failed");
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!complycubePhotoId) return;
+    if (referencePhotoDataUrl || referencePhotoLoading) return;
+
+    const fetchPhoto = async () => {
+      try {
+        setReferencePhotoLoading(true);
+        const { base64 } = await getComplyCubePhoto(complycubePhotoId);
+        setReferencePhotoDataUrl(base64);
+        await startCamera();
+      } catch (error) {
+        console.error("[Verification] Unable to load ComplyCube photo:", error);
+        toast.error("Unable to load ComplyCube photo for comparison.");
+        setState("failed");
+      } finally {
+        setReferencePhotoLoading(false);
+      }
+    };
+
+    fetchPhoto();
+  }, [open, complycubePhotoId, referencePhotoDataUrl, referencePhotoLoading, startCamera, toast]);
 
   const captureAndVerify = async () => {
     if (!videoRef.current || !canvasRef.current) {
@@ -108,6 +152,10 @@ export default function FacialRecognitionModal({
 
     if (!videoRef.current.videoWidth || !videoRef.current.videoHeight) {
       toast.error("Camera video stream not ready. Please wait a moment and try again.");
+      return;
+    }
+    if (!referencePhotoDataUrl) {
+      toast.error("Reference photo unavailable.");
       return;
     }
 
@@ -131,98 +179,27 @@ export default function FacialRecognitionModal({
       if (!imageData || imageData.length < 100) {
         throw new Error("Failed to capture image. Please try again.");
       }
+      const similarity = await calculateSimilarityScore(referencePhotoDataUrl, imageData);
+      setSimilarityScore(similarity);
 
-      console.log("[Verification] Image captured, size:", imageData.length, "bytes");
-
-      // Get ComplyCube live photo URL from session
-      const sessionId = sessionManager.getSessionId();
-      
-      if (!sessionId) {
-        throw new Error("Session not found. Please refresh the page and try again.");
-      }
-
-      console.log("[Verification] Fetching verification record for session:", sessionId);
-
-      // Get verification record
-      const { data: verificationData, error: fetchError } = await supabase
-        .from("verification_records")
-        .select("selfie_url, complycube_client_id, complycube_verification_id")
-        .eq("session_id", sessionId)
-        .single();
-
-      if (fetchError) {
-        console.error("[Verification] Error fetching verification record:", fetchError);
-        throw new Error(`Failed to load verification data: ${fetchError.message}`);
-      }
-
-      if (!verificationData) {
-        throw new Error("Verification record not found. Please complete ID verification first.");
-      }
-
-      if (!verificationData.selfie_url) {
-        console.error("[Verification] No selfie_url in verification record:", verificationData);
-        throw new Error("No verification photo found. Please complete ID upload and facial verification first.");
-      }
-
-      console.log("[Verification] Comparing against:", verificationData.selfie_url);
-      console.log("[Verification] Calling verify-complycube-biometric function");
-
-      // Call edge function to compare
-      const { data, error } = await supabase.functions.invoke("verify-complycube-biometric", {
-        body: {
-          referencePhotoUrl: verificationData.selfie_url,
-          currentFaceImage: imageData,
-        },
-      });
-
-      if (error) {
-        console.error("[Verification] Edge function error:", error);
-        // Extract more detailed error message
-        const errorMessage = error.message || 
-          (error.context?.msg) || 
-          "Failed to verify identity. Please try again.";
-        throw new Error(errorMessage);
-      }
-
-      console.log("[Verification] Result:", data);
-
-      if (!data) {
-        throw new Error("No response from verification service");
-      }
-
-      if (data.verified) {
-        setConfidence(data.confidence || 95);
-        setAnalysis(data.analysis || "Identity verified successfully");
+      if (similarity >= MATCH_THRESHOLD) {
         setState("success");
-        
-        // Stop camera
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-        }
-
-        toast.success("Identity confirmed!");
-        
-        // Call success callback after short delay
+        stopCamera();
+        toast.success(`Identity confirmed! Similarity ${similarity.toFixed(1)}%.`);
         setTimeout(() => {
           onVerificationSuccess();
           onOpenChange(false);
-        }, 2000);
+        }, 1500);
       } else {
-        setAttempts(attempts + 1);
-        setConfidence(data.confidence || 0);
-        setAnalysis(data.analysis || data.error || "Faces do not match");
-        
-        if (attempts + 1 >= MAX_ATTEMPTS) {
+        const nextAttempts = attempts + 1;
+        setAttempts(nextAttempts);
+        if (nextAttempts >= MAX_ATTEMPTS) {
           setState("failed");
-          toast.error("Maximum attempts exceeded. Your verification will be manually reviewed.");
-          
-          // Stop camera
-          if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-          }
+          toast.error("Maximum attempts exceeded. Please try again later.");
+          stopCamera();
         } else {
           setState("camera");
-          toast.error(`Verification failed. ${MAX_ATTEMPTS - (attempts + 1)} attempts remaining.`);
+          toast.error(`Faces did not match (${similarity.toFixed(1)}%). ${MAX_ATTEMPTS - nextAttempts} attempts left.`);
         }
       }
     } catch (error: any) {
@@ -231,19 +208,13 @@ export default function FacialRecognitionModal({
       toast.error(errorMessage);
       setState("camera");
       
-      // If it's a critical error, stop camera
-      if (errorMessage.includes("not found") || errorMessage.includes("Session")) {
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-        }
-      }
     }
   };
 
   const handleRetry = () => {
     setAttempts(0);
-    setConfidence(0);
-    setAnalysis("");
+    setSimilarityScore(null);
+    setState("camera");
     startCamera();
   };
 
@@ -257,21 +228,21 @@ export default function FacialRecognitionModal({
           </DialogTitle>
         </DialogHeader>
 
-        {/* Skip Link */}
-        <div className="text-center">
-          <button
-            onClick={() => {
-              toast.success("Verification skipped");
-              onVerificationSuccess();
-              onOpenChange(false);
-            }}
-            className="text-sm text-muted-foreground hover:text-primary underline"
-          >
-            Skip facial verification (testing)
-          </button>
-        </div>
+        {referencePhotoLoading && (
+          <div className="flex flex-col items-center justify-center py-12 space-y-4">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Loading ComplyCube photo...</p>
+          </div>
+        )}
 
-        <div className="space-y-4">
+        {!referencePhotoLoading && !referencePhotoDataUrl && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            Unable to load ComplyCube photo. Close the modal and try again.
+          </div>
+        )}
+
+        {referencePhotoDataUrl && (
+          <div className="space-y-4">
           {/* Camera View */}
           {state === "camera" && (
             <div className="space-y-4">
@@ -292,6 +263,9 @@ export default function FacialRecognitionModal({
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Attempt {attempts + 1} of {MAX_ATTEMPTS}
+                  {similarityScore !== null && (
+                    <> • Last similarity {similarityScore.toFixed(1)}%</>
+                  )}
                 </p>
               </div>
               <Button
@@ -309,7 +283,7 @@ export default function FacialRecognitionModal({
           {state === "processing" && (
             <div className="flex flex-col items-center justify-center py-12 space-y-4">
               <Loader2 className="h-16 w-16 animate-spin text-primary" />
-              <p className="text-lg font-medium">Verifying your identity...</p>
+              <p className="text-lg font-medium">Comparing your identity...</p>
               <p className="text-sm text-muted-foreground">Please wait</p>
             </div>
           )}
@@ -319,16 +293,9 @@ export default function FacialRecognitionModal({
             <div className="flex flex-col items-center justify-center py-12 space-y-4">
               <CheckCircle2 className="h-16 w-16 text-green-500" />
               <p className="text-lg font-medium">Identity Verified!</p>
-              <div className="text-center space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  Confidence: {confidence.toFixed(1)}%
-                </p>
-                {analysis && (
-                  <p className="text-xs text-muted-foreground max-w-md">
-                    {analysis}
-                  </p>
-                )}
-              </div>
+              <p className="text-sm text-muted-foreground">
+                Similarity: {similarityScore?.toFixed(1) ?? MATCH_THRESHOLD}%
+              </p>
             </div>
           )}
 
@@ -341,9 +308,9 @@ export default function FacialRecognitionModal({
                 <p className="text-sm text-muted-foreground">
                   Maximum attempts reached. Your case will be manually reviewed.
                 </p>
-                {confidence > 0 && (
+                {similarityScore !== null && (
                   <p className="text-xs text-muted-foreground">
-                    Last confidence: {confidence.toFixed(1)}%
+                    Last similarity: {similarityScore.toFixed(1)}%
                   </p>
                 )}
               </div>
@@ -362,7 +329,8 @@ export default function FacialRecognitionModal({
           )}
 
           <canvas ref={canvasRef} className="hidden" />
-        </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
