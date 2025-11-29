@@ -5,21 +5,31 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { 
+      status: 204,
+      headers: corsHeaders 
+    });
   }
 
   try {
     console.log("[CREATE-PAYMENT-INTENT] Function started");
 
-    // Initialize Stripe with secret key
+    // Initialize Stripe with keys
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
+    const stripePublishableKey = Deno.env.get("STRIPE_PUBLISHABLE_KEY");
+
     if (!stripeKey) {
       throw new Error("STRIPE_SECRET_KEY is not configured");
+    }
+
+    if (!stripePublishableKey) {
+      console.warn("[CREATE-PAYMENT-INTENT] STRIPE_PUBLISHABLE_KEY not configured – client may not be able to render card input.");
     }
 
     const stripe = new Stripe(stripeKey, {
@@ -105,6 +115,7 @@ serve(async (req) => {
       JSON.stringify({
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
+        publishableKey: stripePublishableKey ?? null,
       }),
       {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

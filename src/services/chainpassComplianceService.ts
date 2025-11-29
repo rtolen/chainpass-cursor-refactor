@@ -58,7 +58,7 @@ export class ChainPassComplianceService {
   constructor(apiKey: string, platformId: string) {
     this.apiKey = apiKey;
     this.platformId = platformId;
-    this.baseUrl = import.meta.env.VITE_CHAINPASS_API_URL || 'https://pbxpkfotysozdmdophhg.supabase.co';
+    this.baseUrl = import.meta.env.VITE_CHAINPASS_API_URL || 'https://jgwmxzgeropjxwonnruz.supabase.co';
   }
 
   /**

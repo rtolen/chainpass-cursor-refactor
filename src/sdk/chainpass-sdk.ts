@@ -34,7 +34,7 @@ export class ChainPassSDK {
 
   constructor(config: ChainPassConfig) {
     this.apiKey = config.apiKey;
-    this.baseUrl = config.baseUrl || 'https://pbxpkfotysozdmdophhg.supabase.co';
+    this.baseUrl = config.baseUrl || 'https://jgwmxzgeropjxwonnruz.supabase.co';
     this.timeout = config.timeout || 30000; // 30 seconds default
 
     if (!this.apiKey) {

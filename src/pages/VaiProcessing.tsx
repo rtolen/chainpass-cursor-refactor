@@ -1,7 +1,14 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { 
   Loader2, 
@@ -13,9 +20,30 @@ import {
 import chainpassLogo from "@/assets/chainpass-logo.svg";
 import { supabase } from "@/integrations/supabase/client";
 import { sessionManager } from "@/utils/sessionManager";
+import { getComplyCubePhoto } from "@/services/getComplyCubePhoto";
 import { useVAIStore } from "@/store/vaiStore";
+import type { TablesInsert, TablesUpdate } from "@/integrations/supabase/types";
 
 type ProcessingState = "verifying" | "generating" | "complete";
+
+const COMPLYCUBE_DOWNLOAD_TEMPLATE = "https://api.complycube.com/v1/livePhotos/{photoID}/download";
+
+type DebugLogEntry = {
+  title: string;
+  requestUrl: string;
+  response: unknown;
+  timestamp: string;
+};
+
+type ComplycubeRequestLog = {
+  requestUrl: string;
+  headers: Record<string, string>;
+  method?: string;
+  responseStatus?: number;
+  responseBody?: string;
+  error?: string;
+  timestamp: string;
+};
 
 // Generate cryptographically secure V.A.I. code (format: 7 characters alphanumeric)
 const generateVAICode = (): string => {
@@ -27,67 +55,405 @@ const generateVAICode = (): string => {
 
 export default function VaiProcessing() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
-  const [processingState, setProcessingState] = useState<ProcessingState>("verifying");
-  const [progress, setProgress] = useState(0);
+  
+  // Check if ComplyCube client ID is present - if so, skip verifying stage
+  const complycubeClientId = searchParams.get("complycube_client");
+  const complycubeAuthorizationKeyFromQuery =
+    searchParams.get("complycube_authorization_key") ||
+    searchParams.get("authorizationKey");
+  const complycubeLivePhotosUrl = complycubeClientId
+    ? `https://api.complycube.com/v1/livePhotos?clientId=${complycubeClientId}`
+    : null;
+  const sessionEmail = sessionStorage.getItem("user_email") || "vairify1@gmail.com";
+  const [processingState, setProcessingState] = useState<ProcessingState>(
+    complycubeClientId ? "generating" : "verifying"
+  );
+  const [progress, setProgress] = useState(complycubeClientId ? 64 : 0);
   const [displayCode, setDisplayCode] = useState<string>("");
   const [verificationRecordId, setVerificationRecordId] = useState<string>("");
+  const [livePhotoId, setLivePhotoId] = useState<string>("");
+  const [photoDownloadUrl, setPhotoDownloadUrl] = useState<string>("");
+  const [photoDataUrl, setPhotoDataUrl] = useState<string>("");
+  const [isPhotoModalOpen, setPhotoModalOpen] = useState(false);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [complycubeAuthorizationKey, setComplycubeAuthorizationKey] = useState<string>(
+    import.meta.env.VITE_COMPLYCUBE_AUTHORIZATION_KEY || ""
+  );
+  const [requestPhotoId, setRequestPhotoId] = useState<string>("");
+  const [authorizationRequestLoading, setAuthorizationRequestLoading] = useState(false);
+  const [complycubeRequestLog, setComplycubeRequestLog] = useState<ComplycubeRequestLog | null>(null);
+  const [requestComplyCubeDownloadURL, setRequestComplyCubeDownloadURL] = useState<string>(
+    COMPLYCUBE_DOWNLOAD_TEMPLATE
+  );
+  const [debugLogs] = useState<DebugLogEntry[]>([]);
 
   // Check if user is LEO from session storage
   const isLEO = sessionStorage.getItem('userType') === 'leo';
 
   // Get V.A.I. store
   const { vaiNumber, setVAI, isGenerating, setGenerating } = useVAIStore();
+  
+  // Use ref to track if process has started to prevent re-running
+  const processStartedRef = useRef(false);
+
+  const authorizationRequestFetchedRef = useRef(false);
+  const complycubePhotoDownloadRequestedRef = useRef(false);
+
+  const appendDebugLogs = useCallback((_entries: DebugLogEntry[]) => {}, []);
+  const handleClearDebugLogs = useCallback(() => {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("vai_debug_logs");
+    }
+  }, []);
+
+  const formatHeaders = (headers: Record<string, string>) =>
+    Object.entries(headers)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n") || "(none)";
+
+const buildDownloadRequestPreview = (url: string, authHeader: string) => {
+  const resolvedUrl =
+    url && url.length > 0 && !url.includes("{photoID}")
+      ? url
+      : "Waiting for resolved Request ComplyCube download URL...";
+  const resolvedAuth = authHeader && authHeader.length > 0 ? authHeader : "ComplyCube authorization key not available";
+
+  return `GET ${resolvedUrl}\n\nHeaders:\nAuthorization: ${resolvedAuth}`;
+};
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const storedKey = sessionStorage.getItem("complycube_authorization_key");
+    if (storedKey) {
+      setComplycubeAuthorizationKey(storedKey);
+      return;
+    }
+
+    if (complycubeAuthorizationKeyFromQuery) {
+      sessionStorage.setItem("complycube_authorization_key", complycubeAuthorizationKeyFromQuery);
+      setComplycubeAuthorizationKey(complycubeAuthorizationKeyFromQuery);
+      return;
+    }
+  }, [complycubeAuthorizationKeyFromQuery]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedPhotoId = sessionStorage.getItem("complycube_request_photo_id");
+    if (storedPhotoId) {
+      setRequestPhotoId(storedPhotoId);
+    }
+  }, []);
+
+  useEffect(() => {
+    const storedDownloadUrl = sessionStorage.getItem("request_complycube_download_url");
+    if (storedDownloadUrl) {
+      setRequestComplyCubeDownloadURL(storedDownloadUrl);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    sessionStorage.setItem("request_complycube_download_url", requestComplyCubeDownloadURL);
+  }, [requestComplyCubeDownloadURL]);
+
+  useEffect(() => {
+    if (processingState !== "complete") return;
+    if (!complycubeLivePhotosUrl || !complycubeAuthorizationKey) return;
+    if (authorizationRequestFetchedRef.current) return;
+
+    const fetchComplycubeLivePhotos = async () => {
+      authorizationRequestFetchedRef.current = true;
+      setAuthorizationRequestLoading(true);
+
+      try {
+        const response = await fetch(complycubeLivePhotosUrl, {
+          method: "GET",
+          headers: {
+            Authorization: complycubeAuthorizationKey,
+          },
+        });
+
+        const contentType = response.headers.get("content-type") || "";
+        let bodyText = "";
+
+        let extractedPhotoId: string | null = null;
+        if (contentType.includes("application/json")) {
+          const json = await response.json();
+          bodyText = JSON.stringify(json, null, 2);
+          extractedPhotoId =
+            json?.data?.[0]?.id ||
+            json?.items?.[0]?.id ||
+            json?.id ||
+            null;
+
+          if (extractedPhotoId) {
+            setRequestPhotoId(extractedPhotoId);
+            sessionStorage.setItem("complycube_request_photo_id", extractedPhotoId);
+            if (!livePhotoId) {
+              setLivePhotoId(extractedPhotoId);
+            }
+            const resolvedDownloadUrl = COMPLYCUBE_DOWNLOAD_TEMPLATE.replace(
+              "{photoID}",
+              extractedPhotoId
+            );
+            setRequestComplyCubeDownloadURL(resolvedDownloadUrl);
+            sessionStorage.setItem("request_complycube_download_url", resolvedDownloadUrl);
+          }
+        } else {
+          bodyText = await response.text();
+        }
+
+        setComplycubeRequestLog({
+          requestUrl: complycubeLivePhotosUrl,
+          method: "GET",
+          headers: {
+            Authorization: complycubeAuthorizationKey,
+          },
+          responseStatus: response.status,
+          responseBody: bodyText || "(empty response)",
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        setComplycubeRequestLog({
+          requestUrl: complycubeLivePhotosUrl,
+          method: "GET",
+          headers: {
+            Authorization: complycubeAuthorizationKey,
+          },
+          error: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString(),
+        });
+      } finally {
+        setAuthorizationRequestLoading(false);
+      }
+    };
+
+    fetchComplycubeLivePhotos();
+  }, [processingState, complycubeLivePhotosUrl, complycubeAuthorizationKey, livePhotoId]);
+
+  useEffect(() => {
+    if (processingState !== "complete") return;
+    if (!requestPhotoId || requestPhotoId.includes("{photoID}")) return;
+    if (complycubePhotoDownloadRequestedRef.current) return;
+
+    const fetchVerificationPhoto = async () => {
+      complycubePhotoDownloadRequestedRef.current = true;
+      setPhotoLoading(true);
+
+      try {
+        const { base64 } = await getComplyCubePhoto(requestPhotoId);
+        setPhotoDataUrl(base64);
+        setPhotoModalOpen(true);
+      } catch (error) {
+        console.error("Failed to download ComplyCube photo:", error);
+        toast({
+          title: "Verification photo unavailable",
+          description: error instanceof Error ? error.message : "Unable to display verification photo.",
+          variant: "destructive",
+        });
+        complycubePhotoDownloadRequestedRef.current = false;
+      } finally {
+        setPhotoLoading(false);
+      }
+    };
+
+    fetchVerificationPhoto();
+  }, [processingState, requestPhotoId, toast]);
+
+  const loadVerificationRecordDetails = useCallback(async (recordIdToLoad: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('verification_records')
+        .select('request_photo_url, live_photo_id, get_photo_url')
+        .eq('id', recordIdToLoad)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Error loading verification record details:', error);
+        return;
+      }
+
+      if (data?.live_photo_id) {
+        setLivePhotoId(data.live_photo_id);
+      }
+
+      if (data?.get_photo_url) {
+        setPhotoDownloadUrl(data.get_photo_url);
+      }
+    } catch (err) {
+      console.error('Unexpected error loading verification record details:', err);
+    }
+  }, []);
 
   // Process V.A.I. generation and save to database
   useEffect(() => {
     const processVAI = async () => {
+      console.log('processVAI called', { vaiNumber, isGenerating, processStarted: processStartedRef.current });
+      
+      const sessionId = sessionManager.getSessionId();
+      let recordId = sessionManager.getVerificationRecordId();
+
+      console.log('Session info:', { sessionId, recordId, complycubeClientId });
+
       // CRITICAL: If V.A.I. already exists in store, use it
       if (vaiNumber) {
         console.log('V.A.I. already exists in store:', vaiNumber);
         const codeToDisplay = isLEO ? `LEO-${vaiNumber}` : vaiNumber;
         setDisplayCode(codeToDisplay);
         setProcessingState("complete");
+        if (recordId) {
+          setVerificationRecordId(recordId);
+        }
+        processStartedRef.current = false; // Reset for potential future use
         return;
       }
 
-      // Check if generation already in progress
-      if (isGenerating) {
-        console.log('V.A.I. generation already in progress');
+      // Check if generation already in progress or if we've already started
+      if (isGenerating || processStartedRef.current) {
+        console.log('V.A.I. generation already in progress or started', { isGenerating, processStarted: processStartedRef.current });
         return;
       }
-
-      const sessionId = sessionManager.getSessionId();
-      let recordId = sessionManager.getVerificationRecordId();
+      
+      // Mark as started
+      processStartedRef.current = true;
+      console.log('Starting VAI processing...');
 
       try {
         setGenerating(true);
 
+        const updateEmailForComplycube = async () => {
+          if (!complycubeClientId) return;
+          try {
+            await supabase
+              .from('verification_records')
+              .update({ email: sessionEmail })
+              .eq('complycube_verification_id', complycubeClientId);
+          } catch (emailError) {
+            console.error('Error updating email by ComplyCube ID:', emailError);
+          }
+        };
+
+        const updateLivePhotoSession = async (shouldFetchPhoto = false) => {
+          if (!complycubeClientId) return;
+          const fetchPhoto = shouldFetchPhoto || !photoDataUrl;
+          try {
+            if (fetchPhoto) {
+              setPhotoLoading(true);
+            }
+            const { data, error } = await supabase.functions.invoke('fetch-complycube-livephoto', {
+              body: {
+                clientId: complycubeClientId,
+                includePhoto: fetchPhoto,
+              },
+            });
+
+            if (error) {
+              throw error;
+            }
+
+            if (data?.livePhotoDownloadId) {
+              setLivePhotoId(data.livePhotoDownloadId);
+            }
+
+            if (data?.getPhotoIdUrl) {
+              setPhotoDownloadUrl(data.getPhotoIdUrl);
+            }
+
+            if (data?.photoData && data?.photoContentType) {
+              setPhotoDataUrl(`data:${data.photoContentType};base64,${data.photoData}`);
+              setPhotoModalOpen(true);
+            }
+
+            const debugEntries: DebugLogEntry[] = [];
+            const timestamp = new Date().toISOString();
+            if (data?.debugInfo?.listRequest) {
+              debugEntries.push({
+                title: "ComplyCube GET livePhotos",
+                requestUrl: data.debugInfo.listRequest.url,
+                response: data.debugInfo.listRequest.response,
+                timestamp,
+              });
+            }
+            if (data?.debugInfo?.downloadRequest) {
+              debugEntries.push({
+                title: "ComplyCube GET livePhotos download",
+                requestUrl: data.debugInfo.downloadRequest.url,
+                response: data.debugInfo.downloadRequest.response,
+                timestamp,
+              });
+            }
+
+            appendDebugLogs(debugEntries);
+          } catch (err) {
+            console.error('Error fetching live photo session:', err);
+            toast({
+              title: "Live photo unavailable",
+              description: err instanceof Error ? err.message : "Unable to retrieve ComplyCube live photo.",
+              variant: "destructive",
+            });
+          } finally {
+            if (fetchPhoto) {
+              setPhotoLoading(false);
+            }
+          }
+        };
+
         // Create or retrieve verification record
         if (!recordId) {
+          console.log('Creating new verification record...', { sessionId, complycubeClientId });
+          const insertPayload: TablesInsert<"verification_records"> = {
+            session_id: sessionId,
+            verification_status: "verified",
+            biometric_confirmed: true,
+            email: sessionEmail,
+          };
+
+          if (complycubeClientId) {
+            insertPayload.complycube_verification_id = complycubeClientId;
+          }
+
           const { data: newRecord, error: recordError } = await supabase
             .from('verification_records')
-            .insert({
-              session_id: sessionId,
-              verification_status: 'verified',
-              biometric_confirmed: true,
-            })
+            .insert(insertPayload)
             .select()
             .single();
 
-          if (recordError) throw recordError;
+          if (recordError) {
+            console.error('Error creating verification record:', recordError);
+            throw recordError;
+          }
+          
+          console.log('Verification record created:', newRecord.id);
           recordId = newRecord.id;
           sessionManager.setVerificationRecordId(recordId);
           setVerificationRecordId(recordId);
         } else {
+          console.log('Updating existing verification record...', { recordId, complycubeClientId });
           // Update existing record
-          await supabase
+          const updatePayload: TablesUpdate<"verification_records"> = {
+            biometric_confirmed: true,
+            verification_status: 'verified',
+            email: sessionEmail,
+          };
+
+          if (complycubeClientId) {
+            updatePayload.complycube_verification_id = complycubeClientId;
+          }
+
+          const { error: updateError } = await supabase
             .from('verification_records')
-            .update({
-              biometric_confirmed: true,
-              verification_status: 'verified',
-            })
+            .update(updatePayload)
             .eq('id', recordId);
+          
+          if (updateError) {
+            console.error('Error updating verification record:', updateError);
+            throw updateError;
+          }
+          
+          console.log('Verification record updated successfully');
           setVerificationRecordId(recordId);
         }
 
@@ -109,6 +475,8 @@ export default function VaiProcessing() {
           setVAI(existingVAI.vai_code, recordId, isLEO);
           sessionManager.setVaiCode(existingVAI.vai_code);
           sessionStorage.setItem('vai_number', existingVAI.vai_code);
+          await updateEmailForComplycube();
+          await updateLivePhotoSession();
           
           const codeToDisplay = isLEO ? `LEO-${existingVAI.vai_code}` : existingVAI.vai_code;
           setDisplayCode(codeToDisplay);
@@ -122,52 +490,104 @@ export default function VaiProcessing() {
           return;
         }
 
-        // Stage 1: Verifying identity
-        const stage1Timer = setTimeout(() => {
-          setProcessingState("generating");
-        }, 2500);
+        // Stage 1: Verifying identity (skip if ComplyCube client ID is present)
+        const stage1Timer = complycubeClientId 
+          ? null 
+          : setTimeout(() => {
+              setProcessingState("generating");
+            }, 2500);
+
+        // Ensure we have a recordId before proceeding
+        if (!recordId) {
+          console.error('No recordId available for VAI generation');
+          setGenerating(false);
+          processStartedRef.current = false;
+          toast({
+            title: "Error",
+            description: "Verification record not found. Please try again.",
+            variant: "destructive",
+          });
+          return;
+        }
 
         // Stage 2: Generate NEW V.A.I. and save to database
-        const stage2Timer = setTimeout(async () => {
-          const newVAICode = generateVAICode();
-          
-          // Save V.A.I. assignment to database
-          const { error: vaiError } = await supabase
-            .from('vai_assignments')
-            .insert({
-              vai_code: newVAICode,
-              verification_record_id: recordId,
-              status: 'complete',
-            });
+        // If ComplyCube client ID is present, start generating immediately
+        const stage2Delay = complycubeClientId ? 0 : 5000;
+        console.log('Setting up VAI generation timer', { stage2Delay, recordId });
+        
+        const generateAndSaveVAI = async () => {
+          try {
+            console.log('Starting VAI code generation...', { recordId });
+            const newVAICode = generateVAICode();
+            console.log('Generated VAI code:', newVAICode);
+            
+            // Save V.A.I. assignment to database
+            const { error: vaiError } = await supabase
+              .from('vai_assignments')
+              .insert({
+                vai_code: newVAICode,
+                verification_record_id: recordId,
+                status: 'complete',
+              });
 
-          if (vaiError) {
-            console.error('Error saving V.A.I.:', vaiError);
+            if (vaiError) {
+              console.error('Error saving V.A.I. to database:', vaiError);
+              toast({
+                title: "Error",
+                description: `Failed to generate V.A.I.: ${vaiError.message}`,
+                variant: "destructive",
+              });
+              setGenerating(false);
+              processStartedRef.current = false;
+              return;
+            }
+
+            console.log('VAI code saved successfully to database');
+            await updateEmailForComplycube();
+            await updateLivePhotoSession();
+            
+            // Store in Zustand and session
+            setVAI(newVAICode, recordId, isLEO);
+            sessionManager.setVaiCode(newVAICode);
+            sessionStorage.setItem('vai_number', newVAICode);
+            
+            // Set display code based on user type
+            const codeToDisplay = isLEO ? `LEO-${newVAICode}` : newVAICode;
+            setDisplayCode(codeToDisplay);
+            
+            setProcessingState("complete");
+            processStartedRef.current = false; // Reset for potential future use
+            
+            // Trigger celebration
+            toast({
+              title: "✓ V.A.I. Confirmed!",
+              description: "Verification complete. Continue to legal agreements.",
+            });
+          } catch (error) {
+            console.error('Error in generateAndSaveVAI:', error);
+            setGenerating(false);
+            processStartedRef.current = false;
             toast({
               title: "Error",
-              description: "Failed to generate V.A.I. Please try again.",
+              description: error instanceof Error ? error.message : "Failed to generate V.A.I.",
               variant: "destructive",
             });
-            setGenerating(false);
-            return;
           }
+        };
 
-          // Store in Zustand and session
-          setVAI(newVAICode, recordId, isLEO);
-          sessionManager.setVaiCode(newVAICode);
-          sessionStorage.setItem('vai_number', newVAICode);
-          
-          // Set display code based on user type
-          const codeToDisplay = isLEO ? `LEO-${newVAICode}` : newVAICode;
-          setDisplayCode(codeToDisplay);
-          
-          setProcessingState("complete");
-          
-          // Trigger celebration
-          toast({
-            title: "✓ V.A.I. Confirmed!",
-            description: "Verification complete. Continue to legal agreements.",
-          });
-        }, 5000);
+        // If delay is 0, call immediately, otherwise use setTimeout
+        const stage2Timer = stage2Delay === 0 
+          ? null 
+          : setTimeout(() => {
+              console.log('Stage 2 timer fired, calling generateAndSaveVAI');
+              generateAndSaveVAI();
+            }, stage2Delay);
+        
+        if (stage2Delay === 0) {
+          // Call immediately for ComplyCube flow
+          console.log('Calling generateAndSaveVAI immediately (ComplyCube flow)');
+          generateAndSaveVAI();
+        }
 
         // Progress animation
         const progressInterval = setInterval(() => {
@@ -181,22 +601,40 @@ export default function VaiProcessing() {
         }, 100);
 
         return () => {
-          clearTimeout(stage1Timer);
-          clearTimeout(stage2Timer);
+          if (stage1Timer) clearTimeout(stage1Timer);
+          if (stage2Timer) clearTimeout(stage2Timer);
           clearInterval(progressInterval);
         };
       } catch (error) {
         console.error('Error processing V.A.I.:', error);
+        setGenerating(false);
+        processStartedRef.current = false; // Reset on error
         toast({
           title: "Error",
-          description: "Failed to process verification. Please try again.",
+          description: error instanceof Error ? error.message : "Failed to process verification. Please try again.",
           variant: "destructive",
         });
+      } finally {
+        // Ensure generating flag is reset if we exit early
+        // Note: setVAI already sets isGenerating to false, so this is just a safety net
       }
     };
 
     processVAI();
-  }, [toast]);
+    // Note: isGenerating is intentionally excluded from dependencies to prevent re-running
+    // when setGenerating(true) is called, which would clear timers prematurely
+  }, [toast, complycubeClientId, vaiNumber, isLEO, setVAI, setGenerating, sessionEmail, appendDebugLogs]);
+
+  useEffect(() => {
+    if (verificationRecordId) {
+      loadVerificationRecordDetails(verificationRecordId);
+    } else {
+      const existingRecordId = sessionManager.getVerificationRecordId();
+      if (existingRecordId) {
+        setVerificationRecordId(existingRecordId);
+      }
+    }
+  }, [verificationRecordId, loadVerificationRecordDetails]);
 
   const handleContinueToVairify = () => {
     // Navigate to LEO declaration
@@ -410,6 +848,185 @@ export default function VaiProcessing() {
             <ExternalLink className="ml-2 w-5 h-5" />
           </Button>
         </div>
+
+        <div className="text-center mt-6 text-sm text-gray-400 space-y-2">
+          <div>
+            Verification email: <span className="font-semibold text-white">{sessionEmail}</span>
+          </div>
+          <div className="text-xs text-gray-400 break-all">
+            ComplyCube authorization key:
+            <span className="block font-mono text-white mt-1 break-all">
+              {complycubeAuthorizationKey || "Not available"}
+            </span>
+          </div>
+          {complycubeLivePhotosUrl && (
+            <div className="text-xs text-gray-400 break-all">
+              ComplyCube live photos request URL:
+              <span className="block font-mono text-white mt-1 break-all">
+                {complycubeLivePhotosUrl}
+              </span>
+            </div>
+          )}
+          {livePhotoId && (
+            <div className="text-xs text-gray-400 break-all">
+              ComplyCube live photo ID:
+              <span className="block font-mono text-white mt-1 break-all">
+                {livePhotoId}
+              </span>
+            </div>
+          )}
+          {photoDownloadUrl && (
+            <div className="text-xs text-gray-400 break-all">
+              ComplyCube photo download URL:
+              <span className="block font-mono text-white mt-1 break-all">
+                {photoDownloadUrl}
+              </span>
+            </div>
+          )}
+          {requestPhotoId && (
+            <div className="text-xs text-gray-400 break-all">
+              Photo ID (from latest ComplyCube request):
+              <span className="block font-mono text-white mt-1 break-all">
+                {requestPhotoId}
+              </span>
+            </div>
+          )}
+          {requestComplyCubeDownloadURL &&
+            !requestComplyCubeDownloadURL.includes("{photoID}") && (
+              <div className="text-xs text-gray-400 break-all">
+                Request ComplyCube download URL:
+                <span className="block font-mono text-white mt-1 break-all">
+                  {requestComplyCubeDownloadURL}
+                </span>
+              </div>
+            )}
+        </div>
+
+        {photoLoading && (
+          <div className="text-center mt-4 text-xs text-gray-400">
+            Fetching ComplyCube live photo...
+          </div>
+        )}
+
+        {photoDataUrl && (
+          <div className="text-center mt-4">
+            <Button
+              variant="secondary"
+              onClick={() => setPhotoModalOpen(true)}
+              className="bg-gray-800 text-white hover:bg-gray-700"
+            >
+              View Verification Photo
+            </Button>
+          </div>
+        )}
+
+        <div className="mt-8 bg-gray-900/60 border border-gray-800 rounded-xl p-5 text-sm text-gray-300 space-y-3">
+          <h3 className="text-lg font-semibold text-white">ComplyCube Live Photos Request Log</h3>
+          <p className="text-xs break-all">
+            Request URL:
+            <span className="block font-mono text-white mt-1 break-all">
+              {complycubeLivePhotosUrl || "Not available"}
+            </span>
+          </p>
+          <p className="text-xs break-all">
+            Authorization header:
+            <span className="block font-mono text-white mt-1 break-all">
+              {complycubeAuthorizationKey || "Not available"}
+            </span>
+          </p>
+          {authorizationRequestLoading && (
+            <p className="text-amber-300 text-xs">Sending GET request to ComplyCube...</p>
+          )}
+          {complycubeRequestLog && (
+            <div className="space-y-2">
+              <p className="text-xs text-gray-400">
+                Status:{" "}
+                <span className="text-white font-mono">
+                  {complycubeRequestLog.responseStatus ?? "N/A"}
+                </span>{" "}
+                • Timestamp:{" "}
+                <span className="text-white font-mono">{complycubeRequestLog.timestamp}</span>
+              </p>
+              <div className="text-xs">
+                <p className="font-semibold text-gray-300 mb-1">Request</p>
+                <pre className="bg-black/40 border border-gray-800 rounded-lg p-3 text-white whitespace-pre-wrap break-all overflow-x-auto">
+                  {`${complycubeRequestLog.method || "GET"} ${complycubeRequestLog.requestUrl}\n\nHeaders:\n${formatHeaders(
+                    complycubeRequestLog.headers || {}
+                  )}`}
+                </pre>
+              </div>
+              {complycubeRequestLog.error ? (
+                <div className="text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-xs">
+                  <p className="font-semibold mb-1">Request Error</p>
+                  <pre className="whitespace-pre-wrap break-all">
+                    {complycubeRequestLog.error}
+                  </pre>
+                </div>
+              ) : (
+                <div className="text-xs">
+                  <p className="font-semibold text-gray-300 mb-1">Response Body</p>
+                  <pre className="bg-black/40 border border-gray-800 rounded-lg p-3 text-white whitespace-pre-wrap break-all overflow-x-auto max-h-72">
+                    {complycubeRequestLog.responseBody}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+          {!authorizationRequestLoading && !complycubeRequestLog && (
+            <p className="text-xs text-gray-500">
+              Request log will appear here once the page has finished loading and a ComplyCube client
+              ID plus authorization key are available.
+            </p>
+          )}
+          <div className="pt-4 mt-4 border-t border-gray-800">
+            <h4 className="text-base font-semibold text-white mb-2">
+              ComplyCube Photo Download Request Log
+            </h4>
+            <p className="text-xs break-all">
+              Download URL:
+              <span className="block font-mono text-white mt-1 break-all">
+                {requestComplyCubeDownloadURL.includes("{photoID}")
+                  ? "Waiting for photo ID..."
+                  : requestComplyCubeDownloadURL}
+              </span>
+            </p>
+          <div className="text-xs mt-3">
+            <p className="font-semibold text-gray-300 mb-1">
+              ComplyCube Photo Download Request (GET)
+            </p>
+            <pre className="bg-black/40 border border-gray-800 rounded-lg p-3 text-white whitespace-pre-wrap break-all overflow-x-auto">
+              {buildDownloadRequestPreview(
+                requestComplyCubeDownloadURL,
+                complycubeAuthorizationKey || ""
+              )}
+            </pre>
+          </div>
+          </div>
+        </div>
+
+
+        <Dialog open={isPhotoModalOpen} onOpenChange={setPhotoModalOpen}>
+          <DialogContent className="sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>ComplyCube Live Photo</DialogTitle>
+              <DialogDescription>
+                This is the live photo captured during your biometric verification session.
+              </DialogDescription>
+            </DialogHeader>
+            {photoDataUrl ? (
+              <img
+                src={photoDataUrl}
+                alt="ComplyCube live verification"
+                className="w-full rounded-xl border border-gray-800"
+              />
+            ) : (
+              <div className="text-center text-sm text-gray-500">
+                Photo unavailable. Please try again later.
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
 
         {/* Footer Links */}
         <div className="mt-12 pt-8 border-t border-gray-700/50 flex flex-wrap justify-center gap-6 text-sm text-gray-400">

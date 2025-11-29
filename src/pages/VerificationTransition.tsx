@@ -102,12 +102,12 @@ export default function VerificationTransition() {
     
     try {
       const sessionId = sessionManager.getSessionId();
-      const email = sessionStorage.getItem("user_email") || "";
+      const email = sessionStorage.getItem("user_email") || "vairify1@gmail.com";
       const phoneNumber = sessionStorage.getItem("user_phone") || "";
-      const firstName = sessionStorage.getItem("user_firstName") || "";
-      const lastName = sessionStorage.getItem("user_lastName") || "";
+      const firstName = sessionStorage.getItem("user_firstName") || "Test";
+      const lastName = sessionStorage.getItem("user_lastName") || "User";
 
-      const body = { sessionId, email, phoneNumber, firstName, lastName };
+      const body = { sessionId, email, user_email: email, phoneNumber, firstName, lastName };
 
       const { data, error } = await supabase.functions.invoke("generate-complycube-token", {
         body,
@@ -167,18 +167,77 @@ export default function VerificationTransition() {
     
     try {
       const sessionId = sessionManager.getSessionId();
-      const email = sessionStorage.getItem("user_email") || "";
+      const email = sessionStorage.getItem("user_email") || "vairify1@gmail.com";
       const phoneNumber = sessionStorage.getItem("user_phone") || "";
-      const firstName = sessionStorage.getItem("user_firstName") || "";
-      const lastName = sessionStorage.getItem("user_lastName") || "";
+      const firstName = sessionStorage.getItem("user_firstName") || "Test";
+      const lastName = sessionStorage.getItem("user_lastName") || "User";
 
-      const body = { sessionId, email, phoneNumber, firstName, lastName };
+      const body = { sessionId, email, user_email: email, phoneNumber, firstName, lastName };
 
       const { data, error } = await supabase.functions.invoke("generate-complycube-token", {
         body,
       });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase function error:', error);
+        console.error('Error type:', error.constructor.name);
+        console.error('Error keys:', Object.keys(error));
+        console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+        
+        // Try to extract error message from error object or response
+        let errorMsg = "Failed to call verification service";
+        
+        // Check various possible locations for the error message
+        if (error.message) {
+          errorMsg = error.message;
+          console.log('Found error.message:', errorMsg);
+        }
+        
+        // Check if error has context with response body
+        const errorAny = error as any;
+        console.log('Error context:', errorAny?.context);
+        console.log('Error response:', errorAny?.response);
+        
+        if (errorAny?.context?.body) {
+          try {
+            const errorBody = typeof errorAny.context.body === 'string' 
+              ? JSON.parse(errorAny.context.body)
+              : errorAny.context.body;
+            errorMsg = errorBody.error || errorBody.message || errorMsg;
+            console.log('Extracted from context.body:', errorMsg);
+          } catch (e) {
+            console.error('Failed to parse error body:', e);
+          }
+        }
+        
+        // Check if error has response data
+        if (errorAny?.response?.data) {
+          const responseData = errorAny.response.data;
+          if (typeof responseData === 'string') {
+            try {
+              const parsed = JSON.parse(responseData);
+              errorMsg = parsed.error || parsed.message || errorMsg;
+              console.log('Extracted from response.data (string):', errorMsg);
+            } catch {
+              errorMsg = responseData || errorMsg;
+              console.log('Using response.data as string:', errorMsg);
+            }
+          } else if (responseData.error || responseData.message) {
+            errorMsg = responseData.error || responseData.message || errorMsg;
+            console.log('Extracted from response.data (object):', errorMsg);
+          }
+        }
+        
+        // Try to get error from context.message
+        if (errorAny?.context?.message) {
+          errorMsg = errorAny.context.message;
+          console.log('Found context.message:', errorMsg);
+        }
+        
+        console.error('Final extracted error message:', errorMsg);
+        setErrorMessage(errorMsg);
+        throw new Error(errorMsg);
+      }
 
       if (data?.success === false) {
         const errorMsg = data.error || "Failed to generate SDK token";
@@ -210,12 +269,12 @@ export default function VerificationTransition() {
     try {
       setErrorMessage("");
       const sessionId = sessionManager.getSessionId();
-      const email = sessionStorage.getItem("user_email") || "";
+      const email = sessionStorage.getItem("user_email") || "vairify1@gmail.com";
       const phoneNumber = sessionStorage.getItem("user_phone") || "";
-      const firstName = sessionStorage.getItem("user_firstName") || "";
-      const lastName = sessionStorage.getItem("user_lastName") || "";
+      const firstName = sessionStorage.getItem("user_firstName") || "Test";
+      const lastName = sessionStorage.getItem("user_lastName") || "User";
 
-      const body = { sessionId, email, phoneNumber, firstName, lastName };
+      const body = { sessionId, email, user_email: email, phoneNumber, firstName, lastName };
 
       const { data, error } = await supabase.functions.invoke("generate-complycube-token", {
         body,
@@ -451,33 +510,7 @@ export default function VerificationTransition() {
 
         {/* Action Buttons */}
         <div className="space-y-4">
-          <Button
-            className="w-full h-14 text-lg gradient-primary hover:opacity-90 transition-smooth shadow-glow"
-            onClick={handleContinueVerification}
-            disabled={verificationState === "loading"}
-          >
-            {verificationState === "loading" ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <Lock className="w-5 h-5 mr-2" />
-                Continue to Verification →
-              </>
-            )}
-          </Button>
-
-          {/* Bypass Link */}
-          <div className="text-center">
-            <button
-              onClick={() => navigate("/vai-processing")}
-              className="text-sm text-muted-foreground hover:text-primary transition-colors underline"
-            >
-              Skip to V.A.I. processing (testing)
-            </button>
-          </div>
+         
 
           {/* Generate SDK Token Button */}
           <Button
@@ -506,7 +539,7 @@ export default function VerificationTransition() {
               </>
             ) : (
               <>
-                Continue to Verification (ComplyCube -local)
+                Continue to Verification
                 <ExternalLink className="w-5 h-5" />
               </>
           )}
@@ -844,3 +877,4 @@ export default function VerificationTransition() {
     </div>
   );
 }
+
